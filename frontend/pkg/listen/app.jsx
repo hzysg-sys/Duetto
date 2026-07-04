@@ -13,6 +13,7 @@ const LS_SKINS = [
 ];
 
 var lsAudioEl = window.__lsAudioEl || (window.__lsAudioEl = new Audio());
+var lsWarmEl = window.__lsWarmEl || (window.__lsWarmEl = new Audio());
 var LS_DEMO_SRC = [];
 function LSApp() {
   const [skin, setSkin] = aUseState(() => { try { return localStorage.getItem('ls-skin') || 'ningzhi'; } catch (e) { return 'ningzhi'; } });
@@ -90,6 +91,25 @@ function LSApp() {
       lsAudioEl.addEventListener('canplay', retry); lsAudioEl.addEventListener('loadeddata', retry);
     };
     setNcmLyric(''); setLoved(false);
+
+    // 双缓冲：下一首的声音已被预热元素缓冲好 → 切到它直接播（零网络请求，iOS 锁屏也能响）
+    try {
+      if (s && s.id && lsWarmEl.getAttribute('data-id') === String(s.id) && lsWarmEl.readyState >= 2) {
+        const oldEl = lsAudioEl;
+        if (window.__lsUnbindAudio) window.__lsUnbindAudio(oldEl);
+        lsAudioEl = window.__lsAudioEl = lsWarmEl;
+        lsWarmEl = window.__lsWarmEl = oldEl;
+        if (window.__lsBindAudio) window.__lsBindAudio(lsAudioEl);
+        try { lsAudioEl.currentTime = 0; } catch (e) {}
+        const pw = lsAudioEl.play(); if (pw && pw.catch) pw.catch(function () {});
+        try { lsWarmEl.pause(); lsWarmEl.removeAttribute('data-id'); lsWarmEl.removeAttribute('src'); lsWarmEl.load(); } catch (e) {}
+        logListen(s, window.__lsWarmUrl || '');
+        window.__lsPrefetch = null;
+        try { delete window.__lsPrefetchMap[String(s.id)]; } catch (e) {}
+        fetch(base + '/ncm/lyric?id=' + s.id).then(r => r.json()).then(l => { window.__lsTLyric = (l && l.tlyric) || ''; setNcmLyric((l && l.lyric) || ''); }).catch(function () {});
+        return;
+      }
+    } catch (e) {}
 
     // 本地链接歌（用户在"本地"里自己添加的直链）：直接播，不走网易云
     if (s && s.url) { lsAudioEl.src = s.url; playSoon(); logListen(s, s.url); return; }
@@ -179,6 +199,17 @@ function LSApp() {
       }).catch(function(){ delete pmap[String(sg.id)]; });
     };
     grab(nxt);
+    // 预热下一首的「声音数据」到预热元素：切歌时零网络、锁屏可续（不只是地址）
+    const primeWarm = (sg, url) => {
+      if (!sg || !sg.id || !url) return;
+      if (lsWarmEl.getAttribute('data-id') === String(sg.id)) return; // 已在预热这首
+      lsWarmEl.setAttribute('data-id', String(sg.id));
+      window.__lsWarmUrl = url;
+      try { lsWarmEl.src = url; lsWarmEl.preload = 'auto'; lsWarmEl.load(); } catch (e) {}
+    };
+    const nu0 = nxt.url || pmap[String(nxt.id)];
+    if (nu0) primeWarm(nxt, nu0);
+    else fetch(base + '/ncm/song-url?id=' + nxt.id).then(r => r.json()).then(d3 => { if (d3 && d3.url) { pmap[String(nxt.id)] = d3.url; if (window.__lsPrefetch && String(window.__lsPrefetch.id) === String(nxt.id)) window.__lsPrefetch.url = d3.url; primeWarm(nxt, d3.url); } }).catch(function () {});
     // 再往后多备两首，整段后台都有粮（随机按计划链，FM/顺序按队列）
     const keep = { [String(nxt.id)]: 1 };
     if (playMode === 'shuffle' && !isFm) { (window.__lsShufflePlan || []).forEach(pi => { const sg = ncmQueue.list[pi]; if (sg) { grab(sg); keep[String(sg.id)] = 1; } }); }
@@ -373,10 +404,13 @@ function LSApp() {
       } catch(er){}
     };
     var onVis = function(){ if (document.visibilityState === 'visible' && window.__lsPlaying && lsAudioEl.paused) { window.__lsSysEvt = Date.now(); lsAudioEl.play().catch(function(){}); } };
-    lsAudioEl.addEventListener('timeupdate', onT); lsAudioEl.addEventListener('ended', onE);
-    lsAudioEl.addEventListener('pause', onP); lsAudioEl.addEventListener('playing', onPl); lsAudioEl.addEventListener('error', onErr); lsAudioEl.addEventListener('stalled', onErr);
+    var _handlers = { timeupdate: onT, ended: onE, pause: onP, playing: onPl, error: onErr, stalled: onErr };
+    var _bind = function(el){ if(!el) return; for (var k in _handlers) el.addEventListener(k, _handlers[k]); };
+    var _unbind = function(el){ if(!el) return; for (var k in _handlers) el.removeEventListener(k, _handlers[k]); };
+    window.__lsBindAudio = _bind; window.__lsUnbindAudio = _unbind;
+    _bind(lsAudioEl);
     document.addEventListener('visibilitychange', onVis);
-    return function(){ lsAudioEl.removeEventListener('timeupdate', onT); lsAudioEl.removeEventListener('ended', onE); lsAudioEl.removeEventListener('pause', onP); lsAudioEl.removeEventListener('playing', onPl); lsAudioEl.removeEventListener('error', onErr); lsAudioEl.removeEventListener('stalled', onErr); document.removeEventListener('visibilitychange', onVis); };
+    return function(){ _unbind(lsAudioEl); document.removeEventListener('visibilitychange', onVis); };
   }, []);
   // rAF □□: □□□□□□□ audio □□□□□ cur□□□ timeupdate □□□□□□□□□□
   aUseEffect(function(){
