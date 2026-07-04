@@ -95,6 +95,20 @@ function maybeImpress(s, sid, title, artist){
     })();
   } catch(e){}
 }
+// 房间对话挂到正在放的歌上：进这首歌的在场记录并喂印象——对话就是档案
+function logRoomNote(s, np, prompt, reply){
+  try {
+    if (!np || !np.id || !/^\d+$/.test(String(np.id))) return;
+    const q2 = String(prompt||'').trim(), a2 = String(reply||'').trim();
+    if (!q2 || !a2 || a2.startsWith('[AI ')) return;
+    const sid = String(np.id), now = Date.now();
+    db.prepare('INSERT INTO song_notes(song_id,title,artist,passage,thought,reply,ts) VALUES(?,?,?,?,?,?,?)').run(sid, np.title||'', np.artist||'', String(np.cur_lyric||'').slice(0,80), q2.slice(0,500), a2.slice(0,1000), now);
+    db.prepare('INSERT INTO songs(id,title,artist,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING').run(sid, np.title||'', np.artist||'', now, now);
+    db.prepare('UPDATE songs SET notes_count=notes_count+1 WHERE id=?').run(sid);
+    if (s && s.ai && s.ai.api_key) maybeImpress(s, sid, np.title||'', np.artist||'');
+  } catch(e){}
+}
+app.get('/api/song-notes',(q,r)=>{ try{ const sid=String(q.query.id||''); const limit=Math.min(200, Number(q.query.limit)||60); const rows = sid ? db.prepare('SELECT song_id,title,artist,passage,thought,reply,ts FROM song_notes WHERE song_id=? ORDER BY ts DESC, rowid DESC LIMIT ?').all(sid, limit) : db.prepare('SELECT song_id,title,artist,passage,thought,reply,ts FROM song_notes ORDER BY ts DESC, rowid DESC LIMIT ?').all(limit); r.json({ok:true, notes:rows}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 app.post('/api/song-note',(q,r)=>{ try{ const b=q.body||{}; const sid=String(b.id||''); if(!sid) return r.json({ok:false}); const s0=getSettings(); const s2={...s0, ai:mergeAi(s0.ai, b.ai)}; db.prepare('INSERT INTO song_notes(song_id,title,artist,passage,thought,reply,ts) VALUES(?,?,?,?,?,?,?)').run(sid, String(b.title||''), String(b.artist||''), String(b.passage||''), String(b.thought||''), String(b.reply||''), Date.now()); try{ db.prepare('INSERT INTO songs(id,title,artist,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(id) DO NOTHING').run(sid, String(b.title||''), String(b.artist||''), Date.now(), Date.now()); db.prepare('UPDATE songs SET notes_count=notes_count+1 WHERE id=?').run(sid); }catch(e){} if(s2.ai.api_key) maybeImpress(s2, sid, b.title, b.artist); r.json({ok:true}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 function fmtSec(x){ x=Math.max(0,Math.floor(Number(x)||0)); return Math.floor(x/60)+':'+String(x%60).padStart(2,'0'); }
 // 组装"正在播"的完整上下文：进度 / 播放次数 / 歌曲分析 / 印象（或在场记录）
@@ -132,8 +146,8 @@ function ensureAnalysis(s, np){
         // 宫殿正统：下载整首音频让分析模型真的去听（input_audio 多模态）；拿不到音频或模型不支持时回落纯歌词
         let audioB64 = '';
         try {
-          let aurl = '';
-          try { const su = await ncm.song_url({ id: sid, cookie: ncmCookie }); aurl = (su.body && su.body.data && su.body.data[0] && su.body.data[0].url) || ''; } catch(e){}
+          let aurl = (np.url && /^https?:/.test(String(np.url))) ? String(np.url) : '';
+          if (!aurl) { try { const su = await ncm.song_url({ id: sid, cookie: ncmCookie }); aurl = (su.body && su.body.data && su.body.data[0] && su.body.data[0].url) || ''; } catch(e){} }
           if (!aurl && /^\d+$/.test(sid)) aurl = 'https://music.163.com/song/media/outer/url?id=' + sid + '.mp3';
           if (aurl) {
             const rr = await fetch(aurl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://music.163.com/' }, redirect: 'follow' });
@@ -181,7 +195,7 @@ function parseReplies(text){
 function withAnalysisAi(s){ const a=s.ai||{}; if(!(a.a_model||a.a_key||a.a_base)) return s; return { ...s, ai:{ ...a, base_url:a.a_base||a.base_url, api_key:a.a_key||a.api_key, model:a.a_model||a.model } }; }
 async function fetchT(url,opts,ms){ const ac=new AbortController(); const t=setTimeout(function(){ ac.abort(); },ms||30000); try{ return await fetch(url,{...opts,signal:ac.signal}); } finally { clearTimeout(t); } }
 async function callLLM(s,messages,over){ const base=String(s.ai.base_url||'').replace(/\/+$/,''); if(!s.ai.api_key)throw Object.assign(new Error('AI not configured'),{status:503}); const rr=await fetchT(base+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.ai.api_key},body:JSON.stringify({model:(over&&over.model)||s.ai.model,temperature:0.9,max_tokens:1024,messages})},(over&&over.timeout)||45000); if(!rr.ok){const t=await rr.text().catch(()=>'');throw Object.assign(new Error('LLM '+rr.status+': '+t.slice(0,200)),{status:502});} const d=await rr.json(); return (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(); }
-app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ enrichNp(s,np); } const raw=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np)},...past,{role:'user',content:String(prompt)}]); const reply=parseReplies(raw).join('\n'); r.json({ok:true,reply}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
+app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ enrichNp(s,np); } const raw=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np)},...past,{role:'user',content:String(prompt)}]); const reply=parseReplies(raw).join('\n'); logRoomNote(s, np, prompt, reply); r.json({ok:true,reply}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— Song analysis: cached per song id so each song is analyzed once ——
 function readAnalysis(sid){ try { return db.prepare("SELECT id,title,artist,text,ts FROM song_analysis WHERE id=? AND text!=''").get(String(sid)) || null; } catch(e){ return null; } }
 function appendAnalysis(e){ try { db.prepare('INSERT OR REPLACE INTO song_analysis(id,title,artist,text,ts) VALUES(?,?,?,?,?)').run(String(e.id||''), e.title||'', e.artist||'', e.text||'', e.ts||Date.now()); } catch(err){} }
@@ -276,6 +290,7 @@ wss.on('connection', (sock, req) => {
         const past = Array.isArray(hist) ? hist.slice(-12).filter(x=>x&&x.role&&typeof x.content==='string') : [];
         if (np) { enrichNp(eff, np); }
         const reply = parseReplies(await callLLM(eff, [{ role:'system', content: sysPrompt(eff, 'music', np) }, ...past, { role:'user', content: String(m.prompt||'') }])).join('\n');
+        logRoomNote(eff, np, m.prompt, reply);
         sock.send(JSON.stringify({ t:'ai', id:m.id, reply }));
       } catch(e) { sock.send(JSON.stringify({ t:'ai', id:m.id, reply:'[AI error: '+e.message+']' })); }
       return;
