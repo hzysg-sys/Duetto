@@ -78,7 +78,7 @@ function LSApp() {
   };
   const openSongById = (songId) => { const i = LS_SONGS.findIndex(s => s.id === songId); if (i >= 0) { setIdx(i); setDrawerIdx(i); } };
   const playSong = (song) => { setNcmSong(null); setNcmQueue(null); const i = LS_SONGS.findIndex(s => s.id === song.id); if (i >= 0) { setIdx(i); setCur(0); setPlaying(true); setView('player'); } };
-  const logListen = (s) => { try { fetch((window.__LS_API || '/api') + '/listen-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id, title: s.title, artist: s.artist || '', dur: s.dur || 0 }) }).catch(function(){}); } catch (e) {} };
+  const logListen = (s) => { try { fetch((window.__LS_API || '/api') + '/listen-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id, title: s.title, artist: s.artist || '', dur: s.dur || 0, cover: s.cover || '' }) }).catch(function(){}); } catch (e) {} };
   const loadNcm = (s) => {
     const base = window.__LS_API || '/api';
     setNcmLyric(''); setLoved(false);
@@ -100,12 +100,15 @@ function LSApp() {
   aUseEffect(() => {
     if (!ncmQueue || !ncmQueue.list || ncmQueue.list.length < 2 || playMode === 'one') return;
     const curSong = ncmQueue.list[ncmQueue.idx];
-    const d = (curSong && curSong.dur) || 0;
+    const d = (curSong && curSong.dur) || Math.floor(lsAudioEl.duration || 0);
     if (!d || cur < d - 25) return;
-    const ni = (ncmQueue.idx + 1) % ncmQueue.list.length;
+    const pf0 = window.__lsPrefetch;
+    if (pf0 && pf0.forCur === String((curSong && curSong.id) || '')) return;
+    let ni = (ncmQueue.idx + 1) % ncmQueue.list.length;
+    if (playMode === 'shuffle') { ni = Math.floor(Math.random() * ncmQueue.list.length); if (ni === ncmQueue.idx && ncmQueue.list.length > 1) ni = (ni + 1) % ncmQueue.list.length; }
     const nxt = ncmQueue.list[ni];
-    if (!nxt || (window.__lsPrefetch && String(window.__lsPrefetch.id) === String(nxt.id))) return;
-    window.__lsPrefetch = { id: nxt.id, url: nxt.url || null };
+    if (!nxt) return;
+    window.__lsPrefetch = { id: nxt.id, url: nxt.url || null, idx: ni, forCur: String((curSong && curSong.id) || '') };
     if (nxt.url) return;
     const base = window.__LS_API || '/api';
     fetch(base + '/ncm/song-url?id=' + nxt.id).then(r => r.json()).then(d2 => {
@@ -186,7 +189,7 @@ function LSApp() {
       if (e.ncmQueue) {
         // 单曲循环：原地回到 0 重播，不重新请求 URL —— 后台（iOS 锁屏）时 fetch 会被挂起导致停播
         if (e.playMode === 'one') { try { lsAudioEl.currentTime = 0; lsAudioEl.play().catch(function(){}); } catch(er){} }
-        else if (e.playNcmIdx) { e.playNcmIdx(e.playMode === 'shuffle' ? Math.floor(Math.random()*e.ncmQueue.list.length) : e.ncmQueue.idx + 1); }
+        else if (e.playNcmIdx) { var pfe = window.__lsPrefetch; e.playNcmIdx((pfe && pfe.idx != null) ? pfe.idx : (e.playMode === 'shuffle' ? Math.floor(Math.random()*e.ncmQueue.list.length) : e.ncmQueue.idx + 1)); }
       } else {
         setIdx(function(i){ return (e.playMode) === 'shuffle' ? Math.floor(Math.random()*LS_SONGS.length) : (i+1)%LS_SONGS.length; }); setCur(0);
       }

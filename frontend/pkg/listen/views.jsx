@@ -839,14 +839,17 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
       ".lsr-ava{width:42px;height:42px;border-radius:50%;overflow:hidden;flex-shrink:0;background:var(--ls-panel2)}",
       ".lsr-ava .ls-w-face,.lsr-ava image-slot{width:100%;height:100%;display:block}",
       ".lsr-ava.ghost{visibility:hidden}",
-      ".lsr-col{display:flex;flex-direction:column;gap:4px;min-width:0;max-width:min(76%,300px)}",
+      ".lsr-col{display:flex;flex-direction:column;gap:4px;min-width:0;max-width:min(76%,300px);position:relative}",
       ".lsr-chat.noava .lsr-col{max-width:min(88%,360px)}",
       ".lsr-row.self .lsr-col{align-items:flex-end}",
       ".lsr-row.other .lsr-col{align-items:flex-start}",
-      ".lsr-bubble{max-width:100%;border-radius:20px;padding:7px 15px 8px;line-height:1.7;font-size:14px;font-family:var(--ls-cn);white-space:pre-wrap;overflow-wrap:anywhere}",
+      ".lsr-bubble{max-width:100%;border-radius:20px;padding:7px 11px 8px;line-height:1.7;font-size:14px;font-family:var(--ls-cn);white-space:pre-wrap;overflow-wrap:anywhere}",
       ".lsr-row.self .lsr-bubble{background:var(--lsr-bub-self,color-mix(in srgb, var(--ls-panel) 15%, #fff));color:var(--ls-ink);border:1px solid transparent;border-bottom-right-radius:6px;backdrop-filter:blur(var(--lsr-blur-self,0px));-webkit-backdrop-filter:blur(var(--lsr-blur-self,0px))}",
       ".lsr-row.other .lsr-bubble{background:var(--lsr-bub-other,color-mix(in srgb, var(--ls-bg) 15%, #fff));color:var(--ls-ink);border:1px solid transparent;border-bottom-left-radius:6px;backdrop-filter:blur(var(--lsr-blur-other,10px));-webkit-backdrop-filter:blur(var(--lsr-blur-other,10px))}",
-      ".lsr-time{font-family:var(--ls-meta);font-size:9px;color:var(--ls-ink-faint);padding:0 4px}",
+      ".lsr-time{font-family:var(--ls-meta);font-size:9px;color:var(--ls-ink-faint);position:absolute;bottom:2px;white-space:nowrap}",
+      ".lsr-row.other .lsr-time{left:100%;margin-left:5px}",
+      ".lsr-row.self .lsr-time{right:100%;margin-right:5px}",
+      ".lsr-row.runfirst{margin-top:7px}",
       ".lsr-share{display:flex;align-items:center;gap:11px;width:min(300px,78vw);max-width:100%;padding:9px 11px;border-radius:16px;background:var(--lsg-share-bg,color-mix(in srgb,var(--ls-panel2) 82%,transparent));backdrop-filter:blur(var(--lsg-share-blur,0px));-webkit-backdrop-filter:blur(var(--lsg-share-blur,0px));border:1px solid var(--ls-line-soft);box-shadow:0 6px 18px var(--ls-shadow);cursor:pointer;transition:.15s}",
       ".lsr-share:hover{border-color:var(--ls-line)}",
       ".lsr-share .cv{width:46px;height:46px;border-radius:10px;overflow:hidden;flex-shrink:0;position:relative}",
@@ -1058,7 +1061,7 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
           const prev = chat[i - 1];
           const firstOfRun = !prev || prev.sys || prev.who === 'sys' || prev.who !== m.who;
           return (
-            <div key={i} className={'lsr-row ' + (self ? 'self' : 'other')}>
+            <div key={i} className={'lsr-row ' + (self ? 'self' : 'other') + (firstOfRun && i > 0 ? ' runfirst' : '')}>
               {!self && !hideAvas && (firstOfRun ? <div className="lsr-ava"><LSFace who="yu" /></div> : <div className="lsr-ava ghost"></div>)}
               <div className="lsr-col">
                 {m.t ? <div className="lsr-bubble">{m.t}</div> : null}
