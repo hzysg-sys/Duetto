@@ -78,8 +78,17 @@ function LSApp() {
     }
   };
   const openSongById = (songId) => { const i = LS_SONGS.findIndex(s => s.id === songId); if (i >= 0) { setIdx(i); setDrawerIdx(i); } };
-  const playSong = (song) => { setNcmSong(null); setNcmQueue(null); const i = LS_SONGS.findIndex(s => s.id === song.id); if (i >= 0) { setIdx(i); setCur(0); setPlaying(true); setView('player'); } };
+  const playSong = (song) => { setNcmSong(null); setNcmQueue(null); try { localStorage.removeItem('ls-lastplay'); } catch(e){} const i = LS_SONGS.findIndex(s => s.id === song.id); if (i >= 0) { setIdx(i); setCur(0); setPlaying(true); setView('player'); } };
   const logListen = (s, url) => { try { fetch((window.__LS_API || '/api') + '/listen-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id, title: s.title, artist: s.artist || '', dur: s.dur || 0, cover: s.cover || '', url: (url && /^https?:/.test(String(url))) ? String(url) : '' }) }).catch(function(){}); } catch (e) {} };
+  const saveLastplayNow = (list, idx0, kind, cur0) => {
+    try {
+      var lst = Array.isArray(list) ? list.filter(Boolean) : [];
+      if (!lst.length) { localStorage.removeItem('ls-lastplay'); return; }
+      var i = Math.max(0, Math.min(lst.length - 1, Number(idx0) || 0));
+      localStorage.setItem('ls-lastplay', JSON.stringify({ list: lst, idx: i, kind: kind === 'fm' ? 'fm' : '', cur: Math.floor(cur0 || 0) }));
+    } catch (e) {}
+  };
+  const markInternalAudioLoad = () => { window.__lsInternalAudioLoad = Date.now(); };
   const loadNcm = (s) => {
     const base = window.__LS_API || '/api';
     // 就绪即播：新 src 常在 loadstart（未就绪）时就调 play() → 不产生 playing → 无声。
@@ -88,24 +97,31 @@ function LSApp() {
       try { const p = lsAudioEl.play(); if (p && p.catch) p.catch(function(){}); } catch(e){}
       const retry = function(){ try { if (window.__lsPlaying && lsAudioEl.paused) { const p2 = lsAudioEl.play(); if (p2 && p2.catch) p2.catch(function(){}); } } catch(e){} lsAudioEl.removeEventListener('canplay', retry); lsAudioEl.removeEventListener('loadeddata', retry); };
       lsAudioEl.addEventListener('canplay', retry); lsAudioEl.addEventListener('loadeddata', retry);
+      let tries = 0;
+      const later = function(){
+        if (!window.__lsPlaying || !lsAudioEl.paused || tries++ >= 8) return;
+        try { const p3 = lsAudioEl.play(); if (p3 && p3.catch) p3.catch(function(){}); } catch(e){}
+        setTimeout(later, 450);
+      };
+      setTimeout(later, 180);
     };
     setNcmLyric(''); setLoved(false);
 
     // 本地链接歌（用户在"本地"里自己添加的直链）：直接播，不走网易云
-    if (s && s.url) { lsAudioEl.src = s.url; playSoon(); logListen(s, s.url); return; }
+    if (s && s.url) { markInternalAudioLoad(); lsAudioEl.src = s.url; playSoon(); logListen(s, s.url); return; }
     // 预取命中：上一首快放完时已把这首的 URL 取好，切歌零 fetch —— 后台（锁屏）续播不断
     const pf = window.__lsPrefetch;
     const pmapUrl = (window.__lsPrefetchMap || {})[String(s.id)] || '';
     const hitUrl = (pf && String(pf.id) === String(s.id) && pf.url) || pmapUrl;
     if (hitUrl) {
-      lsAudioEl.src = hitUrl; playSoon();
+      markInternalAudioLoad(); lsAudioEl.src = hitUrl; playSoon();
       try { delete window.__lsPrefetchMap[String(s.id)]; } catch (e) {}
       logListen(s, hitUrl);
       window.__lsPrefetch = null;
       fetch(base + '/ncm/lyric?id=' + s.id).then(r => r.json()).then(l => { window.__lsTLyric = (l && l.tlyric) || ''; setNcmLyric((l && l.lyric) || ''); }).catch(function(){});
       return;
     }
-    fetch(base + '/ncm/song-url?id=' + s.id).then(r => r.json()).then(d => { if (d && d.url) { lsAudioEl.src = d.url; playSoon(); logListen(s, d.url); } else { logListen(s, ''); } }).catch(function(){ logListen(s, ''); });
+    fetch(base + '/ncm/song-url?id=' + s.id).then(r => r.json()).then(d => { if (d && d.url) { markInternalAudioLoad(); lsAudioEl.src = d.url; playSoon(); logListen(s, d.url); } else { logListen(s, ''); } }).catch(function(){ logListen(s, ''); });
     fetch(base + '/ncm/lyric?id=' + s.id).then(r => r.json()).then(l => { window.__lsTLyric = (l && l.tlyric) || ''; setNcmLyric((l && l.lyric) || ''); }).catch(function(){});
   };
   const requestFmMore = (opts) => {
@@ -189,7 +205,8 @@ function LSApp() {
     var lst = (list && list.length) ? list : [song];
     var i = (i0 != null) ? Number(i0) : ((list && list.length) ? lst.findIndex(function(x){ return String(x.id) === String(song.id); }) : 0);
     if (i < 0 || i >= lst.length) i = 0;
-    window.__lsPrefetch = null;
+    window.__lsPrefetch = null; window.__lsShufflePlan = [];
+    saveLastplayNow(lst, i, '', 0);
     setNcmQueue({ list: lst, idx: i });
     setNcmSong(lst[i]); setCur(0); setView('player'); setPlaying(true);
     loadNcm(lst[i]);
@@ -198,7 +215,8 @@ function LSApp() {
     var lst = Array.isArray(songs) ? songs.filter(Boolean) : (songs ? [songs] : []);
     if (!lst.length) return;
     var i = Math.max(0, Math.min(lst.length - 1, Number(i0) || 0));
-    window.__lsPrefetch = null;
+    window.__lsPrefetch = null; window.__lsShufflePlan = [];
+    saveLastplayNow(lst, i, 'fm', 0);
     setNcmQueue({ list: lst, idx: i, kind: 'fm' });
     if (playMode === 'one') setPlayMode('loop');
     setNcmSong(lst[i]); setCur(0); setView('player'); setPlaying(true); setFmOpen(false);
@@ -214,6 +232,7 @@ function LSApp() {
     } else {
       ni = ((i % q.list.length) + q.list.length) % q.list.length;
     }
+    saveLastplayNow(q.list, ni, q.kind, 0);
     setNcmQueue({ ...q, idx: ni });
     setNcmSong(q.list[ni]); setCur(0); setPlaying(true);
     loadNcm(q.list[ni]);
@@ -311,14 +330,15 @@ function LSApp() {
     var add = (songs && songs.length) ? songs : (songs ? [songs] : []);
     if (!add.length) return;
     window.__lsPrefetch = null; window.__lsShufflePlan = [];
-    setNcmQueue(q => q ? { ...q, list: [...q.list, ...add] } : { list: add, idx: 0 });
+    setNcmQueue(q => { var list = q ? [...q.list, ...add] : add; saveLastplayNow(list, q ? q.idx : 0, q && q.kind, lsAudioEl.currentTime || 0); return q ? { ...q, list: list } : { list: list, idx: 0 }; });
   };
   // 队列弹窗用：替换真实队列，但不主动改播放进度/播放状态。
   window.__lsReplaceQueue = (songs, idx0) => {
     var lst = Array.isArray(songs) ? songs.filter(Boolean) : (songs ? [songs] : []);
-    if (!lst.length) { setNcmQueue(null); return; }
+    if (!lst.length) { saveLastplayNow([], 0, '', 0); setNcmQueue(null); return; }
     var i = Math.max(0, Math.min(lst.length - 1, idx0 || 0));
     window.__lsPrefetch = null; window.__lsShufflePlan = [];
+    saveLastplayNow(lst, i, '', lsAudioEl.currentTime || 0);
     setNcmQueue({ list: lst, idx: i });
     setNcmSong(lst[i]);
   };
@@ -353,6 +373,9 @@ function LSApp() {
       }
     };
     var onP = function(){
+      // 换源/自然 ended 会短暂 pause；这不是用户或系统暂停，不能把 React 播放态打断。
+      if (Date.now() - (window.__lsInternalAudioLoad || 0) < 3500) return;
+      if (lsAudioEl.ended) return;
       // React 认为在播、audio 却停了 = 系统中断（iOS 锁屏/来电/其它 app 抢占）：本地跟随，但标记来源，广播时跳过
       if (!window.__lsPlaying) return;
       window.__lsSysPause = Date.now(); window.__lsSysEvt = Date.now();
@@ -368,7 +391,7 @@ function LSApp() {
         var at = lsAudioEl.currentTime || 0;
         var base2 = window.__LS_API || '/api';
         fetch(base2 + '/ncm/song-url?id=' + s2.id).then(function(r){ return r.json(); }).then(function(d){
-          if (d && d.url) { lsAudioEl.src = d.url; try { lsAudioEl.currentTime = at; } catch(er){} if (window.__lsPlaying) lsAudioEl.play().catch(function(){}); }
+          if (d && d.url) { markInternalAudioLoad(); lsAudioEl.src = d.url; try { lsAudioEl.currentTime = at; } catch(er){} if (window.__lsPlaying) lsAudioEl.play().catch(function(){}); }
         }).catch(function(){});
       } catch(er){}
     };
@@ -394,14 +417,14 @@ function LSApp() {
       var lp = JSON.parse(raw);
       if (lp && lp.list && lp.list.length) {
         var i = Math.max(0, Math.min(lp.list.length - 1, lp.idx || 0));
-        setNcmQueue({ list: lp.list, idx: i, kind: lp.kind || '' });
+        setNcmQueue({ list: lp.list, idx: i, kind: lp.kind === 'fm' ? 'fm' : '' });
         setNcmSong(lp.list[i]); setCur(lp.cur || 0); setPlaying(false);
         var base = window.__LS_API || '/api';
-        if (lp.list[i].url) { lsAudioEl.src = lp.list[i].url; if (lp.cur) { try { lsAudioEl.currentTime = lp.cur; } catch(e){} } return; }
+        if (lp.list[i].url) { markInternalAudioLoad(); lsAudioEl.src = lp.list[i].url; if (lp.cur) { try { lsAudioEl.currentTime = lp.cur; } catch(e){} } return; }
         fetch(base + '/ncm/lyric?id=' + lp.list[i].id).then(function(r){ return r.json(); }).then(function(l){ { window.__lsTLyric = (l && l.tlyric) || ''; setNcmLyric((l && l.lyric) || ''); }; }).catch(function(){});
         fetch(base + '/ncm/song-url?id=' + lp.list[i].id)
           .then(function(r){ return r.json(); })
-          .then(function(d){ if (d && d.url) { lsAudioEl.src = d.url; if (lp.cur) { var sk = function(){ try { lsAudioEl.currentTime = lp.cur; } catch(e){} if (Math.abs((lsAudioEl.currentTime||0) - lp.cur) < 1.5) { lsAudioEl.removeEventListener('loadedmetadata', sk); lsAudioEl.removeEventListener('canplay', sk); } }; lsAudioEl.addEventListener('loadedmetadata', sk); lsAudioEl.addEventListener('canplay', sk); try { lsAudioEl.load(); } catch(e){} } } })
+          .then(function(d){ if (d && d.url) { markInternalAudioLoad(); lsAudioEl.src = d.url; if (lp.cur) { var sk = function(){ try { lsAudioEl.currentTime = lp.cur; } catch(e){} if (Math.abs((lsAudioEl.currentTime||0) - lp.cur) < 1.5) { lsAudioEl.removeEventListener('loadedmetadata', sk); lsAudioEl.removeEventListener('canplay', sk); } }; lsAudioEl.addEventListener('loadedmetadata', sk); lsAudioEl.addEventListener('canplay', sk); try { lsAudioEl.load(); } catch(e){} } } })
           .catch(function(){});
       }
     } catch (e) {}
@@ -409,7 +432,7 @@ function LSApp() {
   // 记住上次播放：队列变化即存 + 每 5s 存进度
   aUseEffect(() => {
     if (!ncmQueue || !ncmQueue.list || !ncmQueue.list.length) return;
-    var save = function(){ try { localStorage.setItem('ls-lastplay', JSON.stringify({ list: ncmQueue.list, idx: ncmQueue.idx, kind: ncmQueue.kind || '', cur: Math.floor(lsAudioEl.currentTime || 0) })); } catch (e) {} };
+    var save = function(){ try { localStorage.setItem('ls-lastplay', JSON.stringify({ list: ncmQueue.list, idx: ncmQueue.idx, kind: ncmQueue.kind === 'fm' ? 'fm' : '', cur: Math.floor(lsAudioEl.currentTime || 0) })); } catch (e) {} };
     save();
     var t = setInterval(save, 5000);
     return function(){ clearInterval(t); };
@@ -440,16 +463,19 @@ function LSApp() {
   aUseEffect(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
     var ms = navigator.mediaSession;
-    var song = ncmSong || LS_SONGS[idx] || window.LS_EMPTY_SONG;
+    var song = (ncmQueue && ncmQueue.list && ncmQueue.list.length) ? ncmQueue.list[ncmQueue.idx] : (ncmSong || LS_SONGS[idx] || window.LS_EMPTY_SONG);
     if (song && typeof MediaMetadata !== 'undefined') {
       try {
-        var cov = String((song && song.cover) || '');
+        var cov = String((song && song.cover) || '').replace(/^http:/, 'https:');
         var isUrl = /^(https?:|blob:|data:|\/)/.test(cov);
+        var clean = cov.replace(/([?&])param=\d+y\d+(&)?/g, '$1').replace(/[?&]$/, '');
+        var art = [];
+        if (isUrl) [96, 128, 192, 256, 512].forEach(function(sz){ art.push({ src: clean + (clean.indexOf('music.126.net') >= 0 ? ((clean.indexOf('?') >= 0 ? '&' : '?') + 'param=' + sz + 'y' + sz) : ''), sizes: sz + 'x' + sz, type: 'image/jpeg' }); });
         ms.metadata = new MediaMetadata({
           title: song.title || '',
           artist: song.artist || '',
           album: song.album || '一起听',
-          artwork: isUrl ? [{ src: cov + (cov.indexOf('music.126.net') >= 0 ? ((cov.indexOf('?') >= 0 ? '&' : '?') + 'param=512y512') : ''), sizes: '512x512', type: 'image/jpeg' }] : [],
+          artwork: art,
         });
       } catch (e) {}
     }
