@@ -383,7 +383,7 @@ function LSPlayerView({ idx, setIdx, playing, setPlaying, cur, setCur, loved, se
         <button className={'eb' + (loved ? ' on' : '')} onClick={() => {
           const willLove = !loved; setLoved(l => !l);
           if (song && song.id && /^\d+$/.test(String(song.id))) { try { fetch(base + '/ncm/like?id=' + song.id + '&like=' + (willLove ? 1 : 0)).catch(function () {}); } catch (e) {} }
-          if (willLove && song && song.id) { try { const st = window.__lsStore; if (st && st.library && !st.library.some(x => x.songId === song.id)) { st.library.unshift({ songId: song.id, title: song.title, artist: song.artist, cover: song.cover, pinned: false, notes: 0, last: '刚刚' }); if (window.lsSaveStore) window.lsSaveStore(st); } flash('已收藏 · ' + song.title); } catch (e) {} }
+          if (willLove && song && song.id) { try { const st = window.__lsStore; if (st && st.library && !st.library.some(x => x.songId === song.id)) { st.library.unshift({ songId: song.id, title: song.title, artist: song.artist, cover: song.cover, pinned: false, notes: 0, last: Date.now() }); if (window.lsSaveStore) window.lsSaveStore(st); } flash('已收藏 · ' + song.title); } catch (e) {} }
         }}>
           <svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-10-9.2C.4 8.6 2 5 5.4 5c2 0 3.3 1.1 4.1 2.3C10.3 6.1 11.6 5 13.6 5 17 5 18.6 8.6 17 11.8 14.5 16.4 12 21 12 21z"/></svg>
         </button>
@@ -907,7 +907,7 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
     if (song && song.id && /^\d+$/.test(String(song.id))) { try { fetch((window.__LS_API || '/api') + '/ncm/like?id=' + song.id + '&like=' + (willLove ? 1 : 0)).catch(function () {}); } catch (e) {} }
     if (willLove && song && song.id) {
       if (addToLib) { try { addToLib(song); } catch (e) {} }
-      else { try { const st = window.__lsStore; if (st && st.library && !st.library.some(x => x.songId === song.id)) { st.library.unshift({ songId: song.id, title: song.title, artist: song.artist, cover: song.cover, pinned: false, notes: 0, last: '刚刚' }); if (window.lsSaveStore) window.lsSaveStore(st); } } catch (e) {} }
+      else { try { const st = window.__lsStore; if (st && st.library && !st.library.some(x => x.songId === song.id)) { st.library.unshift({ songId: song.id, title: song.title, artist: song.artist, cover: song.cover, pinned: false, notes: 0, last: Date.now() }); if (window.lsSaveStore) window.lsSaveStore(st); } } catch (e) {} }
     }
   };
 

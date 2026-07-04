@@ -72,7 +72,7 @@ function LSApp() {
   const addToLib = (song) => {
     const s = window.__lsStore;
     if (!s.library.some(x => x.songId === song.id)) {
-      s.library.unshift({ songId: song.id, title: song.title, artist: song.artist, cover: song.cover, pinned: false, notes: 0, last: '刚刚' });
+      s.library.unshift({ songId: song.id, title: song.title, artist: song.artist, cover: song.cover, pinned: false, notes: 0, last: Date.now() });
       lsSaveStore(s); bump();
     }
   };

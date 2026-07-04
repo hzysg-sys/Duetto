@@ -74,7 +74,15 @@ async function lsAskAI({ passage, think, chipPrompt, song }) {
   return fb[Math.floor(Math.random() * fb.length)];
 }
 
-Object.assign(window, { lsLoadStore, lsSaveStore, lsSeedStore, lsAskAI, LS_ASK_CHIPS });
+function lsFmtTs(v) {
+  if (typeof v !== 'number') return v ? '早前' : '';
+  const d = new Date(v), now = new Date();
+  const hm = (d.getHours() < 10 ? '0' : '') + d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes();
+  if (d.toDateString() === now.toDateString()) return hm;
+  const y = d.getFullYear() === now.getFullYear() ? '' : (d.getFullYear() + '年');
+  return y + (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+}
+Object.assign(window, { lsLoadStore, lsSaveStore, lsSeedStore, lsAskAI, LS_ASK_CHIPS, lsFmtTs });
 
 // ── 网易云数据缓存层（供切页零闪）────────────────────────
 window.__ncmCache = window.__ncmCache || { status: null, playlists: null, recommend: null };

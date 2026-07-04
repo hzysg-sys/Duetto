@@ -39,7 +39,7 @@ function LSArcCard({ rec, compact, onOpen }) {
         <div className="ls-arc-song">
           <div className="cv"><LSCover cover={rec.cover} size={120} shape="rounded" radius={8} /></div>
           <div className="si"><b>{rec.title}</b><i>{rec.artist}</i></div>
-          <span className="ts">{rec.ts}</span>
+          <span className="ts">{(window.lsFmtTs || String)(rec.ts)}</span>
         </div>
       )}
       {rec.passage && <div className="ls-arc-passage">{rec.passage}</div>}
@@ -50,7 +50,7 @@ function LSArcCard({ rec, compact, onOpen }) {
           <p>{rec.reply}</p>
         </div>
       )}
-      {compact && <div className="ls-arc-ts">{rec.ts}</div>}
+      {compact && <div className="ls-arc-ts">{(window.lsFmtTs || String)(rec.ts)}</div>}
     </div>
   );
 }
@@ -226,7 +226,7 @@ function LSLibraryView({ onOpenSong, bump }) {
               </div>
               <div className="mid" onClick={() => onOpenSong(it.songId)}>
                 <b>{it.title}</b>
-                <div className="sub"><span>{it.artist}</span><span className="dot"></span><span>{it.notes} 条记录</span><span className="dot"></span><span>{it.last}</span></div>
+                <div className="sub"><span>{it.artist}</span><span className="dot"></span><span>{it.notes} 条记录</span><span className="dot"></span><span>{(window.lsFmtTs || String)(it.last)}</span></div>
               </div>
               <div className="ops">
                 <button className={it.pinned ? 'on' : ''} onClick={() => pin(it.songId)} title="置顶">{FIcon.pin}</button>

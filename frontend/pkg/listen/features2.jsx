@@ -95,8 +95,8 @@ function LSAskBar({ song, passage, onClear, onSaved }) {
     // 写入档案
     const s = window.__lsStore;
     s.archive.unshift({ id: 'a' + Date.now(), songId: song.id, title: song.title, artist: song.artist,
-      passage, think: think.trim(), reply: out, model: (s.model && s.model.name) || 'AI', kind: 'both', ts: '刚刚' });
-    const li = s.library.find(x => x.songId === song.id); if (li) { li.notes += 1; li.last = '刚刚'; }
+      passage, think: think.trim(), reply: out, model: (s.model && s.model.name) || 'AI', kind: 'both', ts: Date.now() });
+    const li = s.library.find(x => x.songId === song.id); if (li) { li.notes += 1; li.last = Date.now(); }
     lsSaveStore(s); if (onSaved) onSaved();
   };
 
