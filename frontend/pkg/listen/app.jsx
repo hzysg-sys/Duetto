@@ -78,22 +78,23 @@ function LSApp() {
   };
   const openSongById = (songId) => { const i = LS_SONGS.findIndex(s => s.id === songId); if (i >= 0) { setIdx(i); setDrawerIdx(i); } };
   const playSong = (song) => { setNcmSong(null); setNcmQueue(null); const i = LS_SONGS.findIndex(s => s.id === song.id); if (i >= 0) { setIdx(i); setCur(0); setPlaying(true); setView('player'); } };
-  const logListen = (s) => { try { fetch((window.__LS_API || '/api') + '/listen-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id, title: s.title, artist: s.artist || '', dur: s.dur || 0, cover: s.cover || '' }) }).catch(function(){}); } catch (e) {} };
+  const logListen = (s, url) => { try { fetch((window.__LS_API || '/api') + '/listen-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id, title: s.title, artist: s.artist || '', dur: s.dur || 0, cover: s.cover || '', url: (url && /^https?:/.test(String(url))) ? String(url) : '' }) }).catch(function(){}); } catch (e) {} };
   const loadNcm = (s) => {
     const base = window.__LS_API || '/api';
     setNcmLyric(''); setLoved(false);
-    logListen(s);
+
     // 本地链接歌（用户在"本地"里自己添加的直链）：直接播，不走网易云
-    if (s && s.url) { lsAudioEl.src = s.url; lsAudioEl.play().catch(function(){}); return; }
+    if (s && s.url) { lsAudioEl.src = s.url; lsAudioEl.play().catch(function(){}); logListen(s, s.url); return; }
     // 预取命中：上一首快放完时已把这首的 URL 取好，切歌零 fetch —— 后台（锁屏）续播不断
     const pf = window.__lsPrefetch;
     if (pf && String(pf.id) === String(s.id) && pf.url) {
       lsAudioEl.src = pf.url; lsAudioEl.play().catch(function(){});
+      logListen(s, pf.url);
       window.__lsPrefetch = null;
       fetch(base + '/ncm/lyric?id=' + s.id).then(r => r.json()).then(l => { window.__lsTLyric = (l && l.tlyric) || ''; setNcmLyric((l && l.lyric) || ''); }).catch(function(){});
       return;
     }
-    fetch(base + '/ncm/song-url?id=' + s.id).then(r => r.json()).then(d => { if (d && d.url) { lsAudioEl.src = d.url; lsAudioEl.play().catch(function(){}); } }).catch(function(){});
+    fetch(base + '/ncm/song-url?id=' + s.id).then(r => r.json()).then(d => { if (d && d.url) { lsAudioEl.src = d.url; lsAudioEl.play().catch(function(){}); logListen(s, d.url); } else { logListen(s, ''); } }).catch(function(){ logListen(s, ''); });
     fetch(base + '/ncm/lyric?id=' + s.id).then(r => r.json()).then(l => { window.__lsTLyric = (l && l.tlyric) || ''; setNcmLyric((l && l.lyric) || ''); }).catch(function(){});
   };
   // 快放完时预取下一首的播放地址（顺序模式），ended 后台切歌不再依赖临时 fetch

@@ -60,7 +60,7 @@ async function lsAskAI({ passage, think, chipPrompt, song }) {
   const prompt = lines.join('\n');
   try {
     if (window.claude && window.claude.complete) {
-      const out = await window.claude.complete(prompt);
+      const out = await window.claude.complete(prompt, { noNote: true });
       if (out && out.trim()) return out.trim();
     }
   } catch (e) {}
