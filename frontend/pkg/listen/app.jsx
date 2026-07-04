@@ -174,7 +174,7 @@ function LSApp() {
   // 暴露"当前在放的歌"给 AI 桥（claude-bridge 读 window.__lsNowPlaying 拼进提示词）
   aUseEffect(() => {
     var cur = (ncmQueue && ncmQueue.list && ncmQueue.list.length) ? ncmQueue.list[ncmQueue.idx] : (ncmSong || LS_SONGS[idx]);
-    window.__lsNowPlaying = (cur && cur.title) ? { title: cur.title, artist: cur.artist || '' } : null;
+    window.__lsNowPlaying = (cur && cur.title) ? { title: cur.title, artist: cur.artist || '', id: cur.id || '' } : null;
   }, [ncmSong, ncmQueue, idx]);
   aUseEffect(() => { if (playing) lsAudioEl.play().catch(function(){}); else lsAudioEl.pause(); }, [playing, idx]);
   window.__lsEv = { playMode: playMode, ncmQueue: ncmQueue, playNcmIdx: playNcmIdx, loadNcm: loadNcm };

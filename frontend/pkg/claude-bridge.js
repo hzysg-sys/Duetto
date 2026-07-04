@@ -4,7 +4,7 @@
   function nowPlaying(opts){
     if(opts&&opts.nowPlaying)return opts.nowPlaying;
     var g=window.__lsNowPlaying;
-    if(g&&g.title)return {title:g.title,artist:g.artist||''};
+    if(g&&g.title)return {title:g.title,artist:g.artist||'',id:g.id||''};
     var n=window.ncmSong;
     if(n&&n.title)return {title:n.title,artist:n.artist||''};
     return null;
@@ -28,6 +28,8 @@
     // 昵称与时间感知随每次请求带给后端（前端设置是唯一真相）
     try{var P=window.LS_PEOPLE;if(P){if(P.yu&&P.yu.name)ai.ai_name=P.yu.name;if(P.eve&&P.eve.name)ai.user_name=P.eve.name;}}catch(e){}
     try{ai.time_aware=localStorage.getItem('ls-room-timeaware')!=='0';}catch(e){}
+    // 分析模型三件套：后端生成"听后印象"时优先用它（比如 gemini）
+    try{var ma=(mm.analysis||{});if(ma.endpoint&&ma.key){ai.a_base=ma.endpoint;ai.a_key=ma.key;if(ma.name)ai.a_model=ma.name;}}catch(e){}
     return ai;
   }
   function fetchComplete(prompt, ai, np, history){

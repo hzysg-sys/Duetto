@@ -17,8 +17,8 @@ app.get('/api/health',(_q,r)=>r.json({ok:true,mode:'self-host',version:'0.2.0'})
 app.get('/api/config',(_q,r)=>{ const s=getSettings(); r.json({ok:true,config:{companion:{name:s.ai_name,has_key:Boolean(s.ai.api_key),model:s.ai.model},user:{display_name:s.user_name},room:{title:s.room_name,subtitle:s.room_sub}}}); });
 app.get('/api/settings',(_q,r)=>{ const s=getSettings(); const out={...s,ai:{...s.ai}}; if(out.ai.api_key){ out.ai.has_key=true; out.ai.key_hint='****'+String(out.ai.api_key).slice(-4); out.ai.api_key=''; } r.json({ok:true,settings:out}); });
 app.post('/api/settings',(q,r)=>{ try{ const cur=getSettings(); const b=q.body||{}; const bai={...(b.ai||{})}; if(!bai.api_key||/^\*/.test(bai.api_key))delete bai.api_key; delete bai.has_key; delete bai.key_hint; const next={...cur,...b,ai:{...cur.ai,...bai}}; fs.mkdirSync(dataDir,{recursive:true}); fs.writeFileSync(settingsFile,JSON.stringify(next,null,2)); r.json({ok:true,settings:next}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-app.post('/api/models',async(q,r)=>{ try{ const {base_url,api_key}=q.body||{}; if(!base_url)return r.status(400).json({ok:false,error:'base_url required'}); const base=String(base_url).replace(/\/+$/,''); const rr=await fetch(base+'/models',{headers:api_key?{Authorization:'Bearer '+api_key}:{}}); if(!rr.ok){const t=await rr.text().catch(()=>'');return r.status(502).json({ok:false,error:'models '+rr.status+': '+t.slice(0,200)});} const d=await rr.json(); const arr=Array.isArray(d)?d:(d.data||d.models||[]); r.json({ok:true,models:arr.map(m=>typeof m==='string'?m:(m.id||m.name||m.model||'')).filter(Boolean)}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-function mergeAi(base,over){ const out={...base}; if(over&&typeof over==='object'){ for(const k of ['base_url','api_key','model','persona','ai_name','user_name','time_aware']){ const v=over[k]; if(v!==undefined&&v!==null&&v!=='')out[k]=v; } } return out; }
+app.post('/api/models',async(q,r)=>{ try{ const {base_url,api_key}=q.body||{}; if(!base_url)return r.status(400).json({ok:false,error:'base_url required'}); const base=String(base_url).replace(/\/+$/,''); const rr=await fetch(base+'/models',{headers:api_key?{Authorization:'Bearer '+api_key}:{}}); if(!rr.ok){const t=await rr.text().catch(()=>'');return r.status(502).json({ok:false,error:'models '+rr.status+': '+t.slice(0,200)});} const d=await rr.json(); const arr=Array.isArray(d)?d:(d.data||d.models||[]); r.json({ok:true,models:arr.map(m=>typeof m==='string'?m:(m.id||m.name||m.model||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b,'zh-Hans-CN'))}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+function mergeAi(base,over){ const out={...base}; if(over&&typeof over==='object'){ for(const k of ['base_url','api_key','model','persona','ai_name','user_name','time_aware','a_base','a_key','a_model']){ const v=over[k]; if(v!==undefined&&v!==null&&v!=='')out[k]=v; } } return out; }
 function timeBucket(h){ if(h<5)return '深夜'; if(h<9)return '清晨'; if(h<12)return '上午'; if(h<14)return '午间'; if(h<18)return '下午'; if(h<23)return '晚上'; return '深夜'; }
 function sysPrompt(s,kind,np){ const who=s.ai.ai_name||s.ai_name||'DJ',partner=s.ai.user_name||s.user_name||'You'; const scene=kind==='book'?'一起读书':'一起听歌';
  // 稳定前缀在前（persona/身份/格式/DJ 指令），会变的时间与"正在播"放最后 —— 中转的前缀缓存才能命中
@@ -27,10 +27,36 @@ function sysPrompt(s,kind,np){ const who=s.ai.ai_name||s.ai_name||'DJ',partner=s
  const dj='你可以控制播放器。当你想放某首歌/切歌/暂停/继续时，在回复的最后单独一行输出：<<ACT>>{"type":"play","query":"歌名 歌手"}<<>>（play 需要 query；下一首用 type:"next"、上一首 "prev"、暂停 "pause"、继续 "resume"，这些不需要 query）。想把一首歌推荐给对方但不打断当前播放时，单独一行输出：<<ACT>>{"type":"share","query":"歌名 歌手"}<<>>；分享当前正在放的这首用 {"type":"share"}（不带 query），会在房间里弹出分享卡片。正常聊天时不要输出 ACT，也不要解释这个格式。';
  let timeLine='';
  if(s.ai.time_aware!==false&&String(s.ai.time_aware)!=='false'){ try{ const now=new Date(); const cn=now.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); const h=Number(now.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit'})); timeLine='现在是'+cn+'（'+timeBucket(h)+'）。'; }catch(e){} }
- const nowLine=(np&&np.title)?('现在正在一起听的歌是【'+np.title+(np.artist?(' — '+np.artist):'')+'】，自然地结合它来回应。'):'';
+ const nowLine=(np&&np.title)?('现在正在一起听的歌是【'+np.title+(np.artist?(' — '+np.artist):'')+'】，自然地结合它来回应。'+((np.vibe)?('\n你之前认真听过这首歌，你的听后印象（背景，别复述）：'+np.vibe):'')):'';
  return [s.ai.persona,ident,fmt,dj,timeLine,nowLine].filter(Boolean).join('\n\n'); }
+// —— 听后印象：对话时若正在放的歌还没有分析，就后台生成一份（服务端自己拉歌词）；
+// 已有分析则注入对话上下文 —— 让 AI 是"真听过这首歌"的状态（对齐 luciola 的设计）
+const _anBusy = {};
+function ensureAnalysis(s, np){
+  try {
+    if(!np || !np.id || !/^\d+$/.test(String(np.id))) return null;
+    const sid = String(np.id);
+    const hit = readAnalysis(sid);
+    if (hit) return hit.text;
+    if (_anBusy[sid]) return null;
+    _anBusy[sid] = 1;
+    (async () => {
+      try {
+        let lrc = '';
+        try { const ly = await ncm.lyric({ id: sid, cookie: ncmCookie }); lrc = (ly.body && ly.body.lrc && ly.body.lrc.lyric) || ''; } catch(e){}
+        const s2 = (s.ai.a_key && s.ai.a_base) ? { ...s, ai: { ...s.ai, base_url: s.ai.a_base, api_key: s.ai.a_key, model: s.ai.a_model || s.ai.model } } : s;
+        const text = await callLLM(s2, [
+          { role: 'system', content: '你在认真听一首歌。根据歌名、歌手和完整歌词（行首[分:秒]是时间轴），写一段150字内的听后印象：情绪走向、最戳人的句子、适合什么时刻听。写给自己看的备忘，第一人称，不要分点、不要标签、不要时间戳。' },
+          { role: 'user', content: '歌：' + (np.title || '') + (np.artist ? (' — ' + np.artist) : '') + (lrc ? ('\n完整歌词：\n' + String(lrc).slice(0, 6000)) : '') }
+        ]);
+        if (text) appendAnalysis({ id: sid, title: np.title || '', artist: np.artist || '', text, ts: Date.now() });
+      } catch(e){} finally { delete _anBusy[sid]; }
+    })();
+    return null;
+  } catch(e) { return null; }
+}
 async function callLLM(s,messages,over){ const base=String(s.ai.base_url||'').replace(/\/+$/,''); if(!s.ai.api_key)throw Object.assign(new Error('AI not configured'),{status:503}); const rr=await fetch(base+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.ai.api_key},body:JSON.stringify({model:(over&&over.model)||s.ai.model,temperature:0.9,max_tokens:1024,messages})}); if(!rr.ok){const t=await rr.text().catch(()=>'');throw Object.assign(new Error('LLM '+rr.status+': '+t.slice(0,200)),{status:502});} const d=await rr.json(); return (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(); }
-app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; const reply=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np)},...past,{role:'user',content:String(prompt)}]); r.json({ok:true,reply}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
+app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ const vibe=ensureAnalysis(s,np); if(vibe) np.vibe=vibe; } const reply=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np)},...past,{role:'user',content:String(prompt)}]); r.json({ok:true,reply}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— Song analysis: cached per song id (data/song-analysis.jsonl) so each song is analyzed once ——
 const analysisFile = path.join(dataDir, 'song-analysis.jsonl');
 function readAnalysis(sid){
@@ -111,6 +137,7 @@ wss.on('connection', (sock, req) => {
         const np = m.nowPlaying || (m.ai && m.ai.nowPlaying) || null;
         const hist = m.history || (m.ai && m.ai.history) || [];
         const past = Array.isArray(hist) ? hist.slice(-12).filter(x=>x&&x.role&&typeof x.content==='string') : [];
+        if (np) { const vibe = ensureAnalysis(eff, np); if (vibe) np.vibe = vibe; }
         const reply = await callLLM(eff, [{ role:'system', content: sysPrompt(eff, 'music', np) }, ...past, { role:'user', content: String(m.prompt||'') }]);
         sock.send(JSON.stringify({ t:'ai', id:m.id, reply }));
       } catch(e) { sock.send(JSON.stringify({ t:'ai', id:m.id, reply:'[AI error: '+e.message+']' })); }

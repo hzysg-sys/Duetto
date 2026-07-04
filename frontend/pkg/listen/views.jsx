@@ -881,21 +881,6 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
     }
     s.title = title; s.playing = isPlaying; s.mode = pm;
     if (msgs.length) { const sysMsgs = msgs.map(t => ({ who: 'sys', t: t, time: lsNow(), sys: true })); setChat(c => [...c, ...sysMsgs]); sysMsgs.forEach(bcast); }
-    // 切到新歌：分析模型（设置里的 gemini）听一遍发感想进聊天。服务端按歌缓存，一首只分析一次
-    if (title && msgs.some(t => t.indexOf('播放了') >= 0) && song && song.id && /^\d+$/.test(String(song.id)) && !analyzedRef.current[song.id]) {
-      analyzedRef.current[song.id] = 1;
-      const aCfg = (window.__lsStore && window.__lsStore.model && window.__lsStore.model.analysis) || {};
-      const ai = {};
-      if (aCfg.endpoint && aCfg.key) { ai.base_url = aCfg.endpoint; ai.api_key = aCfg.key; if (aCfg.name) ai.model = aCfg.name; }
-      // persona / 昵称 / 时间感知与对话保持同一套（前端设置为准）
-      try { const P = window.LS_PEOPLE; if (P) { if (P.yu && P.yu.name) ai.ai_name = P.yu.name; if (P.eve && P.eve.name) ai.user_name = P.eve.name; } } catch (e) {}
-      try { if (window.__lsStore && window.__lsStore.persona) ai.persona = window.__lsStore.persona; } catch (e) {}
-      try { ai.time_aware = localStorage.getItem('ls-room-timeaware') !== '0'; } catch (e) {}
-      fetch((window.__LS_API || '/api') + '/song-analysis', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: song.id, title: title, artist: npArtist, lrc: String(ncmLyric || '').slice(0, 6000), ai: ai }) })
-        .then(r => r.json())
-        .then(d => { if (d && d.ok && d.text) { const am = { who: 'yu', t: d.text, time: lsNow() }; setChat(c => [...c, am]); bcast(am); } })
-        .catch(() => {});
-    }
   }, [song && song.title, isPlaying, playMode]);
 
   // 新消息滚到底
@@ -1069,7 +1054,7 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
               {!self && !hideAvas && <div className="lsr-ava"><LSFace who="yu" /></div>}
               <div className="lsr-col">
                 {m.t ? <div className="lsr-bubble">{m.t}</div> : null}
-                {m.share && (<div className="lsr-share" onClick={() => playSharedNcm(m.share)}><div className="cv"><LSCover cover={m.share.cover} shape="rounded" radius={10} size={120} /></div><div className="mn"><div className="eb">{(self ? eveName : yuName) + ' · 分享'}</div><b>{m.share.title}</b><span>{m.share.artist}</span></div><button className="pl" onClick={(e) => { e.stopPropagation(); playSharedNcm(m.share); }}>{LSIcon.play()}</button></div>)}
+                {m.share && (<div className="lsr-share" onClick={() => playSharedNcm(m.share)}><div className="cv"><LSCover cover={m.share.cover} shape="rounded" radius={10} size={120} /></div><div className="mn"><div className="eb">{(self ? eveName : yuName) + ' · 分享'}</div><b>{m.share.title}</b><span>{m.share.artist}</span></div><button className="pl" onClick={(e) => { e.stopPropagation(); playSharedNcm(m.share); }}>{String(song.id) === String(m.share.id) && isPlaying ? <span className="eq2"><i></i><i></i><i></i></span> : LSIcon.play()}</button></div>)}
                 {s && (<div className="lsr-share" onClick={() => playShared(s)}><div className="cv"><LSCover cover={s.cover} shape="rounded" radius={10} size={120} /></div><div className="mn"><div className="eb">{self ? 'You · 分享' : 'AI · 分享'}</div><b>{s.title}</b><span>{s.artist}</span></div><button className="pl" onClick={(e) => { e.stopPropagation(); playShared(s); }}>{LSIcon.play()}</button></div>)}
                 {m.time ? <div className="lsr-time">{m.time}</div> : null}
               </div>
