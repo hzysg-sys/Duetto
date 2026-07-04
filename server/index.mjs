@@ -70,8 +70,8 @@ function sysPrompt(s,kind,np,ctx){ const who=s.ai.ai_name||s.ai_name||'DJ',partn
      +((np.plays>1)?(' · 你们一起听过 '+np.plays+' 次'):'')+'。自然地结合它来回应。';
    if(np.cur_lyric) nowLine+='\n当前唱到：'+String(np.cur_lyric).slice(0,60);
    if(np.analysis) nowLine+='\n[听感 · 你认真听过这首歌，当背景别复述]\n'+np.analysis;
-   if(np.impression) nowLine+='\n这首歌的回忆：'+np.impression;
-   else if(np.notes&&np.notes.length) nowLine+='\n[这首歌最近的在场记录]\n'+np.notes.map(n=>'- '+(n.passage?('歌词「'+n.passage+'」'):'')+(n.thought?(' '+partner+'说：'+n.thought):'')+(n.reply?(' 你回：'+String(n.reply).slice(0,80)):'')).join('\n');
+   if(np.impression) nowLine+='\n[这首歌的回忆 · 你们一起听它的印象总结]\n'+np.impression;
+   if(np.notes&&np.notes.length) nowLine+='\n[这首歌最近的在场记录]\n'+np.notes.map(n=>'- '+(n.passage?('歌词「'+n.passage+'」'):'')+(n.thought?(' '+partner+'说：'+n.thought):'')+(n.reply?(' 你回：'+String(n.reply).slice(0,80)):'')).join('\n');
  }
  const styleLine=s.ai.style?('对话风格（用户设定，按这个方式说话）：'+s.ai.style):''; const ctxLine=ctx?('[你们的记忆 · 外部记忆系统提供，只当背景别复述]\n'+ctx):''; return [s.ai.persona,styleLine,ident,fmt,dj,ctxLine,timeLine,nowLine].filter(Boolean).join('\n\n'); }
 // —— 在场记录（问Ta 的问答挂歌落库）与"印象"（记录满 6 条滚动总结成回忆） ——
@@ -126,8 +126,8 @@ function logRoomNote(s, np, prompt, reply){
     if (s && s.ai && s.ai.api_key) maybeImpress(s, sid, np.title||'', np.artist||'');
   } catch(e){}
 }
-app.get('/api/prompt-preview',async(q,r)=>{ try{ const s0=getSettings(); const s={...s0, ai:{...s0.ai}}; if(String(q.query.mode||'')==='stream') s.ai.reply_mode='stream'; const np={ id:String(q.query.id||'25906124'), title:String(q.query.title||'晴天'), artist:String(q.query.artist||'周杰伦'), pos:100, dur:270, cur_lyric:String(q.query.lyric||'从前从前 有个人爱你很久') }; try { np.plays=countPlays(np.id); const a=readAnalysis(np.id); if(a)np.analysis=a.text; const im=readImpression(np.id); if(im)np.impression=im.text; else { const ns=readNotes(np.id, IMPRESSION_EVERY); if(ns.length)np.notes=ns; } } catch(e){} r.type('text/plain').send(sysPrompt(s, 'music', np, q.query.ctx?String(q.query.ctx):'')); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-app.get('/api/song-analysis',(q,r)=>{ try{ const sid=String(q.query.id||''); const a=sid?readAnalysis(sid):null; r.json({ok:true, text:(a&&a.text)||''}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+app.get('/api/prompt-preview',async(q,r)=>{ try{ const s0=getSettings(); const s={...s0, ai:{...s0.ai}}; if(String(q.query.mode||'')==='stream') s.ai.reply_mode='stream'; const np={ id:String(q.query.id||'25906124'), title:String(q.query.title||'晴天'), artist:String(q.query.artist||'周杰伦'), pos:100, dur:270, cur_lyric:String(q.query.lyric||'从前从前 有个人爱你很久') }; try { np.plays=countPlays(np.id); const a=readAnalysis(np.id); if(a)np.analysis=a.text; const im=readImpression(np.id); if(im)np.impression=im.text; const ns=readNotes(np.id, IMPRESSION_EVERY); if(ns.length)np.notes=ns; } catch(e){} r.type('text/plain').send(sysPrompt(s, 'music', np, q.query.ctx?String(q.query.ctx):'') + '\n\n────────\n（以上是 system 提示词。每次请求还会附带：房间最近 12 条对话，作为标准 user/assistant 消息历史跟在 system 之后——所以不显示在这里。）'); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+app.get('/api/song-analysis',(q,r)=>{ try{ const sid=String(q.query.id||''); const a=sid?readAnalysis(sid):null; const im=sid?readImpression(sid):null; r.json({ok:true, text:(a&&a.text)||'', impression:(im&&im.text)||'', impression_n:(im&&im.n)||0}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 app.get('/api/song-notes',async(q,r)=>{ try{ const sid=String(q.query.id||''); const limit=Math.min(200, Number(q.query.limit)||60); const sql=`SELECT n.song_id, COALESCE(NULLIF(n.title,''),s.title,'') AS title, COALESCE(NULLIF(n.artist,''),s.artist,'') AS artist, COALESCE(s.cover,'') AS cover, n.passage,n.thought,n.reply,n.ts FROM song_notes n LEFT JOIN songs s ON s.id=n.song_id`; const rows = sid ? db.prepare(sql+' WHERE n.song_id=? ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(sid, limit) : db.prepare(sql+' ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(limit); await fillCovers(rows.map(x=>({id:x.song_id, cover:x.cover}))); const cache=loadCoverCache(); for(const x of rows){ if(!x.cover && x.song_id && cache[x.song_id]) x.cover=cache[x.song_id]; } r.json({ok:true, notes:rows}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 app.post('/api/song-note',(q,r)=>{ try{ const b=q.body||{}; const sid=String(b.id||''); if(!sid) return r.json({ok:false}); const s0=getSettings(); const s2={...s0, ai:mergeAi(s0.ai, b.ai)}; const now=Date.now(); db.prepare('INSERT INTO song_notes(song_id,title,artist,passage,thought,reply,ts) VALUES(?,?,?,?,?,?,?)').run(sid, String(b.title||''), String(b.artist||''), String(b.passage||''), String(b.thought||''), String(b.reply||''), now); try{ const cv=normCover(b.cover||''); db.prepare("INSERT INTO songs(id,title,artist,cover,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, cover=CASE WHEN excluded.cover!='' AND COALESCE(songs.cover,'')='' THEN excluded.cover ELSE songs.cover END, updated_at=excluded.updated_at").run(sid, String(b.title||''), String(b.artist||''), cv, now, now); db.prepare('UPDATE songs SET notes_count=notes_count+1 WHERE id=?').run(sid); }catch(e){} if(s2.ai.api_key) maybeImpress(s2, sid, b.title, b.artist); r.json({ok:true}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 function fmtSec(x){ x=Math.max(0,Math.floor(Number(x)||0)); return Math.floor(x/60)+':'+String(x%60).padStart(2,'0'); }
@@ -145,7 +145,8 @@ async function enrichNp(s, np){
   }
   const im = readImpression(sid);
   if (im) np.impression = im.text;
-  else { const ns = readNotes(sid, IMPRESSION_EVERY); if (ns.length) np.notes = ns; }
+  const ns = readNotes(sid, IMPRESSION_EVERY);
+  if (ns.length) np.notes = ns;
   return np;
 }
 // —— 听后印象：对话时若正在放的歌还没有分析，就后台生成一份（服务端自己拉歌词）；

@@ -70,7 +70,7 @@ function LSSongDrawer({ song: songProp, ncmSong, ncmId, loved, onToggleLove, inL
   const startY = fUseRef(null);
   const [ncmC, setNcmC] = fUseState(null);
   const [ana, setAna] = fUseState('');
-  fUseEffect(() => { let on = true; setAna(''); if (song && song.id && /^\d+$/.test(String(song.id))) { fetch((window.__LS_API || '/api') + '/song-analysis?id=' + song.id).then(r => r.json()).then(d => { if (on && d && d.ok) setAna(d.text || ''); }).catch(() => {}); } return () => { on = false; }; }, [song && song.id]);
+  fUseEffect(() => { let on = true; setAna(''); if (song && song.id && /^\d+$/.test(String(song.id))) { fetch((window.__LS_API || '/api') + '/song-analysis?id=' + song.id).then(r => r.json()).then(d => { if (on && d && d.ok) { const parts = []; if (d.impression) parts.push('【这首歌的回忆】\n' + d.impression); if (d.text) parts.push('【听感分析】\n' + d.text); setAna(parts.join('\n\n')); } }).catch(() => {}); } return () => { on = false; }; }, [song && song.id]);
   const localArc = (window.__lsStore.archive || []).filter(a => a.songId === song.id);
   const [srvArc, setSrvArc] = fUseState(null);
   fUseEffect(() => { let on = true; if (song && song.id && /^\d+$/.test(String(song.id))) { fetch((window.__LS_API || '/api') + '/song-notes?id=' + song.id).then(r => r.json()).then(d => { if (on && d && d.ok) setSrvArc(lsNotesToRecs(d.notes)); }).catch(() => {}); } return () => { on = false; }; }, [song && song.id]);
@@ -130,7 +130,7 @@ function LSSongDrawer({ song: songProp, ncmSong, ncmId, loved, onToggleLove, inL
 
           {tab === 'lyric' && (<div>
             {ana
-              ? <div className="ls-dr-ana">{ana}</div>
+              ? <div className="ls-dr-ana" style={{ whiteSpace: 'pre-line' }}>{ana}</div>
               : <LSEmpty t="还没认真听过这首" s="放着它进房间聊聊、或点「问 Ta」，就会真的听一遍写下来" />}
             {(song.lyrics && song.lyrics.length) ? <div className="ls-dr-lyrics">
               {song.lyrics.map((l, i) => {
