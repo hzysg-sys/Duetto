@@ -89,7 +89,7 @@ function LSAskBar({ song, passage, onClear, onSaved }) {
         const d0 = new Date(); const tm = (d0.getHours() < 10 ? '0' : '') + d0.getHours() + ':' + (d0.getMinutes() < 10 ? '0' : '') + d0.getMinutes();
         const qTxt = ((passage ? ('「' + passage + '」') : '') + ' ' + (think.trim() || (chip ? chip.label : ''))).trim();
         if (qTxt) window.__LS_SYNC.send({ t: 'chat', msg: { who: 'eve', t: qTxt, time: tm } });
-        if (out) window.__LS_SYNC.send({ t: 'chat', msg: { who: 'yu', t: out, time: tm } });
+        if (out) String(out).split(/\n+/).map(function(x){ return x.trim(); }).filter(Boolean).forEach(function(seg){ window.__LS_SYNC.send({ t: 'chat', msg: { who: 'yu', t: seg, time: tm } }); });
       }
     } catch (e) {}
     // 写入档案
@@ -109,7 +109,7 @@ function LSAskBar({ song, passage, onClear, onSaved }) {
         {reply && (
           <div className="ls-ask-reply">
             <span className="who">{FIcon.AI} AI</span>
-            <p>{reply}</p>
+            <p style={{ whiteSpace: 'pre-line' }}>{reply}</p>
             <div className="done">已记进听歌档案 ✓</div>
           </div>
         )}

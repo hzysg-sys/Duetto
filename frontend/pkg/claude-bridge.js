@@ -29,7 +29,7 @@
     try{var P=window.LS_PEOPLE;if(P){if(P.yu&&P.yu.name)ai.ai_name=P.yu.name;if(P.eve&&P.eve.name)ai.user_name=P.eve.name;}}catch(e){}
     try{ai.time_aware=localStorage.getItem('ls-room-timeaware')!=='0';}catch(e){}
     // 分析模型三件套：后端生成"听后印象"时优先用它（比如 gemini）
-    try{var ma=(mm.analysis||{});if(ma.endpoint&&ma.key){ai.a_base=ma.endpoint;ai.a_key=ma.key;if(ma.name)ai.a_model=ma.name;}}catch(e){}
+    try{var ma=(mm.analysis||{});var ab=ma.endpoint||m.endpoint,ak=ma.key||m.key;if((ma.name||ma.endpoint)&&ab&&ak){ai.a_base=ab;ai.a_key=ak;if(ma.name)ai.a_model=ma.name;}}catch(e){}
     return ai;
   }
   function fetchComplete(prompt, ai, np, history){

@@ -23,8 +23,8 @@ function timeBucket(h){ if(h<5)return '深夜'; if(h<9)return '清晨'; if(h<12)
 function sysPrompt(s,kind,np){ const who=s.ai.ai_name||s.ai_name||'DJ',partner=s.ai.user_name||s.user_name||'You'; const scene=kind==='book'?'一起读书':'一起听歌';
  // 稳定前缀在前（persona/身份/格式/DJ 指令），会变的时间与"正在播"放最后 —— 中转的前缀缓存才能命中
  const ident='你叫'+who+'，正在和'+partner+scene+'。';
- const fmt='用自然的口语回复，可以带（动作/神态）的小描写；不要分点、不要标签、不要解释你的格式。';
- const dj='你可以控制播放器。当你想放某首歌/切歌/暂停/继续时，在回复的最后单独一行输出：<<ACT>>{"type":"play","query":"歌名 歌手"}<<>>（play 需要 query；下一首用 type:"next"、上一首 "prev"、暂停 "pause"、继续 "resume"，这些不需要 query）。想把一首歌推荐给对方但不打断当前播放时，单独一行输出：<<ACT>>{"type":"share","query":"歌名 歌手"}<<>>；分享当前正在放的这首用 {"type":"share"}（不带 query），会在房间里弹出分享卡片。正常聊天时不要输出 ACT，也不要解释这个格式。';
+ const fmt='用自然的口语回复，可以带（动作/神态）的小描写；不要分点、不要标签、不要解释你的格式。你的整个回复输出成一个 JSON 数组，每个元素是一条独立的聊天气泡，像在聊天软件里连着发消息那样：["第一条","第二条"]。通常 1-4 条，每条一两句话；只输出这个数组本身，别的什么都不要。';
+ const dj='你可以控制播放器。当你想放某首歌/切歌/暂停/继续时，把这个指令作为数组的最后一个元素单独输出：<<ACT>>{"type":"play","query":"歌名 歌手"}<<>>（play 需要 query；下一首用 type:"next"、上一首 "prev"、暂停 "pause"、继续 "resume"，这些不需要 query）。想把一首歌推荐给对方但不打断当前播放时，同样作为数组最后一个元素输出：<<ACT>>{"type":"share","query":"歌名 歌手"}<<>>；分享当前正在放的这首用 {"type":"share"}（不带 query），会在房间里弹出分享卡片。正常聊天时不要输出 ACT，也不要解释这个格式。';
  let timeLine='';
  if(s.ai.time_aware!==false&&String(s.ai.time_aware)!=='false'){ try{ const now=new Date(); const cn=now.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); const h=Number(now.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit'})); timeLine='现在是'+cn+'（'+timeBucket(h)+'）。'; }catch(e){} }
  let nowLine='';
@@ -60,7 +60,7 @@ function maybeImpress(s, sid, title, artist){
         const lines = fresh.map(n => '- ' + (n.passage ? ('歌词「' + n.passage + '」') : '') + (n.thought ? (' 她说：' + n.thought) : '') + (n.reply ? (' 你回：' + String(n.reply).slice(0, 120)) : '')).join('\n');
         let head = '把下面这些「你和她一起听《' + (title || '') + '》' + (artist ? ('—' + artist) : '') + '时的片段」揉成一段150字内的第一人称回忆印象：写你俩和这首歌的故事、她被哪些句子戳到、情绪的流变。温柔具体有质感，直接出正文，不要分点、不要标签。';
         if (impr && impr.text) head += '\n这是之前的印象，在它基础上自然续写，别推翻：\n' + impr.text;
-        const text = await callLLM(s, [{ role: 'system', content: head }, { role: 'user', content: '新片段：\n' + lines }]);
+        const text = await callLLM(withAnalysisAi(s), [{ role: 'system', content: head }, { role: 'user', content: '新片段：\n' + lines }]);
         if (text) { fs.mkdirSync(dataDir,{recursive:true}); fs.appendFileSync(imprFile, JSON.stringify({ id: sid, text, n: notes.length, ts: Date.now() }) + '\n'); }
       } catch(e){} finally { delete _imBusy[sid]; }
     })();
@@ -95,19 +95,35 @@ function ensureAnalysis(s, np){
       try {
         let lrc = '';
         try { const ly = await ncm.lyric({ id: sid, cookie: ncmCookie }); lrc = (ly.body && ly.body.lrc && ly.body.lrc.lyric) || ''; } catch(e){}
-        const s2 = (s.ai.a_key && s.ai.a_base) ? { ...s, ai: { ...s.ai, base_url: s.ai.a_base, api_key: s.ai.a_key, model: s.ai.a_model || s.ai.model } } : s;
+        const s2 = withAnalysisAi(s);
         const text = await callLLM(s2, [
           { role: 'system', content: '你在认真听一首歌。根据歌名、歌手和完整歌词（行首[分:秒]是时间轴），写一段150字内的听后印象：情绪走向、最戳人的句子、适合什么时刻听。写给自己看的备忘，第一人称，不要分点、不要标签、不要时间戳。' },
           { role: 'user', content: '歌：' + (np.title || '') + (np.artist ? (' — ' + np.artist) : '') + (lrc ? ('\n完整歌词：\n' + String(lrc).slice(0, 6000)) : '') }
         ]);
         if (text) appendAnalysis({ id: sid, title: np.title || '', artist: np.artist || '', text, ts: Date.now() });
-      } catch(e){} finally { delete _anBusy[sid]; }
+        console.log('[analysis]', sid, 'by', s2.ai.model, text ? 'ok' : 'empty');
+      } catch(e){ console.log('[analysis err]', sid, e.message); } finally { delete _anBusy[sid]; }
     })();
     return null;
   } catch(e) { return null; }
 }
+// 宫殿 parse_replies 的 JS 版：模型按协议输出 JSON 数组 -> 拆成多条气泡；容错：数组前粘杂字就从第一个 [ 切进去；再不行按换行拆；最后整段一条
+function parseReplies(text){
+  let t=String(text||'').trim();
+  if(t.startsWith('```')) t=t.split('\n').slice(1).join('\n');
+  if(t.endsWith('```')) t=t.slice(0,t.lastIndexOf('```'));
+  t=t.trim();
+  const unwrap=r=>typeof r==='string'?r:(r&&typeof r==='object'?String(r.text||r.content||r.value||r.message||''):String(r==null?'':r));
+  const fromArr=a=>{const o=a.map(unwrap).map(x=>String(x).trim()).filter(Boolean);return o.length?o:null;};
+  try{ const pj=JSON.parse(t); if(Array.isArray(pj)){const o=fromArr(pj);if(o)return o;} else if(pj&&typeof pj==='object'){ for(const k of ['messages','replies','msgs','items','contents','reply']){ if(Array.isArray(pj[k])){const o=fromArr(pj[k]);if(o)return o;} } if(pj.text||pj.content){const o=fromArr([pj]);if(o)return o;} } }catch(e){}
+  const bi=t.indexOf('['), bj=t.lastIndexOf(']');
+  if(bi>=0&&bj>bi){ try{ const p2=JSON.parse(t.slice(bi,bj+1)); if(Array.isArray(p2)){const o=fromArr(p2);if(o)return o;} }catch(e){} }
+  return t?t.split(/\n+/).map(x=>x.trim()).filter(Boolean):[];
+}
+// 分析模型三件套：只填了模型名就回落聊天端点密钥
+function withAnalysisAi(s){ const a=s.ai||{}; if(!(a.a_model||(a.a_key&&a.a_base))) return s; return { ...s, ai:{ ...a, base_url:a.a_base||a.base_url, api_key:a.a_key||a.api_key, model:a.a_model||a.model } }; }
 async function callLLM(s,messages,over){ const base=String(s.ai.base_url||'').replace(/\/+$/,''); if(!s.ai.api_key)throw Object.assign(new Error('AI not configured'),{status:503}); const rr=await fetch(base+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.ai.api_key},body:JSON.stringify({model:(over&&over.model)||s.ai.model,temperature:0.9,max_tokens:1024,messages})}); if(!rr.ok){const t=await rr.text().catch(()=>'');throw Object.assign(new Error('LLM '+rr.status+': '+t.slice(0,200)),{status:502});} const d=await rr.json(); return (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(); }
-app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ enrichNp(s,np); } const reply=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np)},...past,{role:'user',content:String(prompt)}]); r.json({ok:true,reply}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
+app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ enrichNp(s,np); } const raw=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np)},...past,{role:'user',content:String(prompt)}]); const reply=parseReplies(raw).join('\n'); r.json({ok:true,reply}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— Song analysis: cached per song id (data/song-analysis.jsonl) so each song is analyzed once ——
 const analysisFile = path.join(dataDir, 'song-analysis.jsonl');
 function readAnalysis(sid){
@@ -118,7 +134,7 @@ function readAnalysis(sid){
   return null;
 }
 function appendAnalysis(e){ try { fs.mkdirSync(dataDir,{recursive:true}); fs.appendFileSync(analysisFile, JSON.stringify(e) + '\n'); } catch(err){} }
-app.post('/api/song-analysis',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s=(bb.ai&&bb.ai.api_key)?{...s0,ai:mergeAi(s0.ai,bb.ai)}:{...s0,ai:mergeAi(s0.ai,{ai_name:bb.ai&&bb.ai.ai_name,user_name:bb.ai&&bb.ai.user_name,persona:bb.ai&&bb.ai.persona,time_aware:bb.ai&&bb.ai.time_aware})}; if(!s.ai.api_key)return r.json({ok:true,text:''}); const {title='',artist=''}=bb; const sid=String(bb.id||''); if(sid){ const hit=readAnalysis(sid); if(hit) return r.json({ok:true,text:hit.text,cached:true}); } const lrc=String(bb.lrc||'').slice(0,6000); const lyrArr=Array.isArray(bb.lyrics)?bb.lyrics.map(l=>typeof l==='string'?l:(l&&(l.line||l.text))||'').filter(Boolean).join('\n'):''; const lyr=lrc||lyrArr; const text=await callLLM(s,[{role:'system',content:sysPrompt(s,'music',{title,artist})+'\n\n她刚放了这首歌，你认真听完了。写1-3句听后感，像随口说给她听的，温柔具体有质感；可以引用扎到你的那句歌词。歌词每行行首的[分:秒]是时间轴，只用来感受歌的推进，回复里不要出现时间戳。直接出正文，不要分点、不要标签。'},{role:'user',content:'歌：'+title+(artist?(' — '+artist):'')+(lyr?('\n完整歌词：\n'+lyr):'')}]); if(sid&&text) appendAnalysis({id:sid,title,artist,text,ts:Date.now()}); r.json({ok:true,text}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
+app.post('/api/song-analysis',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s=(bb.ai&&bb.ai.api_key)?{...s0,ai:mergeAi(s0.ai,bb.ai)}:{...s0,ai:mergeAi(s0.ai,{ai_name:bb.ai&&bb.ai.ai_name,user_name:bb.ai&&bb.ai.user_name,persona:bb.ai&&bb.ai.persona,time_aware:bb.ai&&bb.ai.time_aware})}; if(!s.ai.api_key)return r.json({ok:true,text:''}); const {title='',artist=''}=bb; const sid=String(bb.id||''); if(sid){ const hit=readAnalysis(sid); if(hit) return r.json({ok:true,text:hit.text,cached:true}); } const lrc=String(bb.lrc||'').slice(0,6000); const lyrArr=Array.isArray(bb.lyrics)?bb.lyrics.map(l=>typeof l==='string'?l:(l&&(l.line||l.text))||'').filter(Boolean).join('\n'):''; const lyr=lrc||lyrArr; const text=parseReplies(await callLLM(s,[{role:'system',content:sysPrompt(s,'music',{title,artist})+'\n\n她刚放了这首歌，你认真听完了。写1-3句听后感，像随口说给她听的，温柔具体有质感；可以引用扎到你的那句歌词。歌词每行行首的[分:秒]是时间轴，只用来感受歌的推进，回复里不要出现时间戳。直接出正文，不要分点、不要标签、不要 JSON 数组。'},{role:'user',content:'歌：'+title+(artist?(' — '+artist):'')+(lyr?('\n完整歌词：\n'+lyr):'')}])).join('\n'); if(sid&&text) appendAnalysis({id:sid,title,artist,text,ts:Date.now()}); r.json({ok:true,text}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— NetEase Cloud Music: real QR login ——
 const ncmCookieFile = path.join(dataDir, 'ncm-cookie.txt');
 let ncmCookie = '';
@@ -210,7 +226,7 @@ wss.on('connection', (sock, req) => {
         const hist = m.history || (m.ai && m.ai.history) || [];
         const past = Array.isArray(hist) ? hist.slice(-12).filter(x=>x&&x.role&&typeof x.content==='string') : [];
         if (np) { enrichNp(eff, np); }
-        const reply = await callLLM(eff, [{ role:'system', content: sysPrompt(eff, 'music', np) }, ...past, { role:'user', content: String(m.prompt||'') }]);
+        const reply = parseReplies(await callLLM(eff, [{ role:'system', content: sysPrompt(eff, 'music', np) }, ...past, { role:'user', content: String(m.prompt||'') }])).join('\n');
         sock.send(JSON.stringify({ t:'ai', id:m.id, reply }));
       } catch(e) { sock.send(JSON.stringify({ t:'ai', id:m.id, reply:'[AI error: '+e.message+']' })); }
       return;
