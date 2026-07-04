@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Duetto - a self-hostable listen-together player for two, with a bring-your-own-AI companion that actually listens.",
   "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
     "start": "node server/index.mjs"
   },

@@ -28,6 +28,8 @@ moments you point at a lyric, and grows a memory of what each song means to the 
 
 ## Quick start
 
+> Requires **Node 24+** (uses Node's built-in SQLite).
+
 ```bash
 npm install
 npm start
@@ -74,11 +76,14 @@ Point your proxy at the server (default 4183), serve at your domain root, and **
 
 ## Security note
 
-Duetto is currently a single-user / trusted-room app and does **not** ship an application login layer.
-Do not expose a deployment directly to the public internet unless you put it behind your own access
-control first (for example reverse-proxy Basic Auth, Cloudflare Access, Tailscale, or a private LAN).
-Without that gate, visitors can call the same API your browser uses, including music-account actions
-and room/archive reads.
+Duetto ships a built-in **PIN gate** (see the Security section above): on first open you set a PIN,
+and after that every API call and the sync socket require the token derived from it. Until a PIN is
+set, the server refuses all non-auth requests, so a fresh deployment is not open by default.
+
+This is a single-secret lock meant for a two-person / trusted-room app, **not** a full multi-user
+auth system. For anything internet-facing, still put it behind **HTTPS** and consider an additional
+upstream gate (reverse-proxy auth, Cloudflare Access, Tailscale, or a private LAN) for defense in
+depth. All music-account actions and room/archive reads sit behind the PIN gate.
 
 ## Security
 

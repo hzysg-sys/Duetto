@@ -15,7 +15,7 @@ const LS_SKINS = [
 var lsAudioEl = window.__lsAudioEl || (window.__lsAudioEl = new Audio());
 var LS_DEMO_SRC = [];
 function LSApp() {
-  const [skin, setSkin] = aUseState(() => { let v = ''; try { v = localStorage.getItem('ls-skin') || ''; } catch (e) {} const mig = { yuebai: 'ningzhi', komorebi: 'douqing', shiliu: 'xueqing', rongyi: 'ouhe' }; if (mig[v]) { v = mig[v]; try { localStorage.setItem('ls-skin', v); } catch (e) {} } return v || 'ningzhi'; });
+  const [skin, setSkin] = aUseState(() => { try { return localStorage.getItem('ls-skin') || 'ningzhi'; } catch (e) { return 'ningzhi'; } });
   const [customAc, setCustomAc] = aUseState(() => localStorage.getItem('ls-skin-custom') || '#c99bb0');
   const [customVars, setCustomVars] = aUseState(() => { try { return JSON.parse(localStorage.getItem('ls-skin-diy') || '{}'); } catch (e) { return {}; } });
   const [darkMode, setDarkMode] = aUseState(() => { try { return localStorage.getItem('ls-dark') === '1'; } catch (e) { return false; } });
@@ -93,7 +93,7 @@ function LSApp() {
     if (hitUrl) {
       lsAudioEl.src = hitUrl; lsAudioEl.play().catch(function(){});
       try { delete window.__lsPrefetchMap[String(s.id)]; } catch (e) {}
-      logListen(s, pf.url);
+      logListen(s, hitUrl);
       window.__lsPrefetch = null;
       fetch(base + '/ncm/lyric?id=' + s.id).then(r => r.json()).then(l => { window.__lsTLyric = (l && l.tlyric) || ''; setNcmLyric((l && l.lyric) || ''); }).catch(function(){});
       return;
@@ -173,8 +173,10 @@ function LSApp() {
     };
     grab(nxt);
     // 再往后多备两首，整段后台都有粮（随机按计划链，FM/顺序按队列）
-    if (playMode === 'shuffle' && !isFm) { (window.__lsShufflePlan || []).forEach(pi => grab(ncmQueue.list[pi])); }
-    else { for (let k = 2; k <= 3; k++) { const j = isFm ? (ncmQueue.idx + k) : ((ncmQueue.idx + k) % ncmQueue.list.length); if (j < ncmQueue.list.length) grab(ncmQueue.list[j]); } }
+    const keep = { [String(nxt.id)]: 1 };
+    if (playMode === 'shuffle' && !isFm) { (window.__lsShufflePlan || []).forEach(pi => { const sg = ncmQueue.list[pi]; if (sg) { grab(sg); keep[String(sg.id)] = 1; } }); }
+    else { for (let k = 2; k <= 3; k++) { const j = isFm ? (ncmQueue.idx + k) : ((ncmQueue.idx + k) % ncmQueue.list.length); const sg = ncmQueue.list[j]; if (j < ncmQueue.list.length && sg) { grab(sg); keep[String(sg.id)] = 1; } } }
+    try { Object.keys(pmap).forEach(id => { if (!keep[id]) delete pmap[id]; }); } catch (e) {}
   }, [cur, ncmQueue, playMode]);
   window.__lsPlayNcm = (song, list, i0) => {
     var lst = (list && list.length) ? list : [song];
@@ -244,6 +246,7 @@ function LSApp() {
   window.__lsRunAction = (act) => {
     try {
       if (!act || !act.type) return;
+      if (['play','next','prev','pause','resume','like','queue','share'].indexOf(act.type) < 0) return;
       // 标记操作者：房间状态卡片据此显示对应昵称（AI 点歌/切歌 vs 用户手点）
       window.__lsActor = { who: 'ai', t: Date.now() };
       var base = window.__LS_API || '/api';
@@ -300,6 +303,7 @@ function LSApp() {
   window.__lsQueueAppend = (songs) => {
     var add = (songs && songs.length) ? songs : (songs ? [songs] : []);
     if (!add.length) return;
+    window.__lsPrefetch = null; window.__lsShufflePlan = [];
     setNcmQueue(q => q ? { ...q, list: [...q.list, ...add] } : { list: add, idx: 0 });
   };
   // 队列弹窗用：替换真实队列，但不主动改播放进度/播放状态。
@@ -307,6 +311,7 @@ function LSApp() {
     var lst = Array.isArray(songs) ? songs.filter(Boolean) : (songs ? [songs] : []);
     if (!lst.length) { setNcmQueue(null); return; }
     var i = Math.max(0, Math.min(lst.length - 1, idx0 || 0));
+    window.__lsPrefetch = null; window.__lsShufflePlan = [];
     setNcmQueue({ list: lst, idx: i });
     setNcmSong(lst[i]);
   };

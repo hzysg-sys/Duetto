@@ -446,10 +446,10 @@ function LSPlayerView({ idx, setIdx, playing, setPlaying, cur, setCur, loved, se
 
       {/* 控制：播放方式 · 上一首 · 播放 · 下一首 · 队列 */}
       <div className="ls-ctrl">
-        <button className="mini" onClick={cyclePlayMode} title={playModeName}>{playModeIcon()}</button>
-        <button onClick={() => { if (ncmQueue && goPrev) { goPrev(); } else { setIdx(rel(-1)); setCur(0); } }}>{LSIcon.prev()}</button>
-        <button className="play" onClick={() => setPlaying(p => !p)}>{playing ? LSIcon.pause() : LSIcon.play()}</button>
-        <button onClick={() => { if (ncmQueue && goNext) { goNext(); } else { setIdx(rel(1)); setCur(0); } }}>{LSIcon.next()}</button>
+        <button className="mini" onClick={() => { window.__lsActor = { who: 'user', t: Date.now() }; cyclePlayMode(); }} title={playModeName}>{playModeIcon()}</button>
+        <button onClick={() => { window.__lsActor = { who: 'user', t: Date.now() }; if (ncmQueue && goPrev) { goPrev(); } else { setIdx(rel(-1)); setCur(0); } }}>{LSIcon.prev()}</button>
+        <button className="play" onClick={() => { window.__lsActor = { who: 'user', t: Date.now() }; setPlaying(p => !p); }}>{playing ? LSIcon.pause() : LSIcon.play()}</button>
+        <button onClick={() => { window.__lsActor = { who: 'user', t: Date.now() }; if (ncmQueue && goNext) { goNext(); } else { setIdx(rel(1)); setCur(0); } }}>{LSIcon.next()}</button>
         <button className="mini" onClick={onOpenQueue} title="播放队列">{LSIcon.queue()}</button>
       </div>
 
@@ -752,7 +752,8 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
   const toggleBg = () => setBgOn(v => { const nv = !v; try { localStorage.setItem('ls-room-bg-on', nv ? '1' : '0'); } catch (e) {} return nv; });
   const toggleAvas = () => setHideAvas(function (h) { const nh = !h; try { localStorage.setItem('ls-room-hideava', nh ? '1' : '0'); } catch (e) {} return nh; });
   const [lyrQuote, setLyrQuote] = vUseState('');
-  vUseEffect(function () { try { var pq = window.__lsPendingQuote; if (pq && pq.line) { setLyrQuote(pq.line); window.__lsPendingQuote = null; } } catch (e) {} }, []);
+  const [lyrQuoteSong, setLyrQuoteSong] = vUseState('');
+  vUseEffect(function () { try { var pq = window.__lsPendingQuote; if (pq && pq.line) { setLyrQuote(pq.line); setLyrQuoteSong(pq.song || ''); window.__lsPendingQuote = null; } } catch (e) {} }, []);
   const [replyMode, setReplyMode] = vUseState(function () { try { return localStorage.getItem('ls-room-replymode') || 'bubbles'; } catch (e) { return 'bubbles'; } });
   const setRM = function (v) { setReplyMode(v); try { localStorage.setItem('ls-room-replymode', v); } catch (e) {} };
   const [timeAware, setTimeAware] = vUseState(function () { try { return localStorage.getItem('ls-room-timeaware') !== '0'; } catch (e) { return true; } });
@@ -983,9 +984,9 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
   const send = async () => {
     const text = draft.trim();
     if (!text || busy) return;
-    const qv = lyrQuote; setLyrQuote('');
+    const qv = lyrQuote; const qsongName = lyrQuoteSong || (song && song.title) || ''; setLyrQuote(''); setLyrQuoteSong('');
     setDraft('');
-    const userMsg = { who: 'eve', t: text, quote: qv || undefined, qsong: qv ? (song.title || '') : undefined, time: lsNow() };
+    const userMsg = { who: 'eve', t: text, quote: qv || undefined, qsong: qv ? qsongName : undefined, time: lsNow() };
     setChat(c => [...c, userMsg]);
     bcast(userMsg);
     // 仅「点歌聊」走 AI DJ；其余标签保持原样
@@ -1046,7 +1047,7 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
     var room = (window.__LS_SYNC && window.__LS_SYNC.room && window.__LS_SYNC.room()) || 'main';
     fetch((window.__LS_API || '/api') + '/room/events?room=' + encodeURIComponent(room) + '&limit=150')
       .then(function (r) { return r.json(); })
-      .then(function (d) { if (d && d.ok && d.events && d.events.length) setChat(d.events); })
+      .then(function (d) { if (d && d.ok && Array.isArray(d.events)) setChat(function (prev) { var k = function (e) { return (e.who || '') + '|' + (e.t || '') + '|' + (e.time || ''); }; var seen = {}; var out = d.events.slice(); d.events.forEach(function (e) { seen[k(e)] = 1; }); (prev || []).forEach(function (e) { if (!seen[k(e)]) out.push(e); }); return out; }); })
       .catch(function () {});
   }, []);
   const playSharedNcm = (sh) => { if (window.__lsPlayNcm) window.__lsPlayNcm({ id: sh.id, title: sh.title, artist: sh.artist, cover: sh.cover, url: sh.url || undefined }, null, 0); };
@@ -1162,9 +1163,9 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
         )}
       </div>
       {/* 展开面板贴着悬浮球弹出（js 计算位置防出屏），定位前隐藏避免闪跳 */}
-      {ballOpen && <LSFullCenter song={song} cur={position} dur={dur} isPlaying={isPlaying} loved={lovedNow} ncmQueue={ncmQueue} ncmLyric={ncmLyric} playNcmIdx={playNcmIdx} doPlay={doPlay} doPause={doPause} doNext={doNext} doLove={doLove} playMode={playMode} doMode={doMode} onClose={() => setBallOpen(false)} onQuote={(line) => { setLyrQuote(line); setBallOpen(false); }} defaultTab={ballStyle === 'island' ? 'queue' : 'lyrics'} posStyle={fcPos ? { left: fcPos.left + 'px', top: fcPos.top + 'px', right: 'auto', bottom: 'auto', margin: 0 } : { visibility: 'hidden' }} />}
+      {ballOpen && <LSFullCenter song={song} cur={position} dur={dur} isPlaying={isPlaying} loved={lovedNow} ncmQueue={ncmQueue} ncmLyric={ncmLyric} playNcmIdx={playNcmIdx} doPlay={doPlay} doPause={doPause} doNext={doNext} doLove={doLove} playMode={playMode} doMode={doMode} onClose={() => setBallOpen(false)} onQuote={(line) => { setLyrQuote(line); setLyrQuoteSong((song && song.title) || ''); setBallOpen(false); }} defaultTab={ballStyle === 'island' ? 'queue' : 'lyrics'} posStyle={fcPos ? { left: fcPos.left + 'px', top: fcPos.top + 'px', right: 'auto', bottom: 'auto', margin: 0 } : { visibility: 'hidden' }} />}
 
-      {lyrQuote ? <div className="lsr-quotebar"><span>❝ {lyrQuote}</span><button onClick={() => setLyrQuote('')}>×</button></div> : null}
+      {lyrQuote ? <div className="lsr-quotebar"><span>❝ {lyrQuote}</span><button onClick={() => { setLyrQuote(''); setLyrQuoteSong(''); }}>×</button></div> : null}
       <div className="ls-input">
         <div className="box"><input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => e.key === 'Enter' && send()} placeholder="边听边说…" /><button className="send" onClick={send}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button></div>
       </div>

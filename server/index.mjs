@@ -7,6 +7,8 @@ import { fileURLToPath } from 'url';
 import ncm from 'NeteaseCloudMusicApi';
 import crypto from 'crypto';
 import { DatabaseSync } from 'node:sqlite';
+import dns from 'dns';
+import net from 'net';
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = process.env.DUETTO_DATA_DIR || path.join(rootDir, 'data');
 const settingsFile = path.join(dataDir, 'settings.json');
@@ -44,33 +46,77 @@ app.use(express.json({limit:'2mb'}));
 // ═══ 应用级门禁：首次打开设 PIN，之后所有 /api/* 与 /ws 需要 token（网易云登录只是登网易账号，这道门才是应用自己的锁） ═══
 const authFile = path.join(dataDir, 'auth.json');
 function readAuth(){ try { return JSON.parse(fs.readFileSync(authFile, 'utf8')); } catch(e){ return null; } }
-function writeAuth(a){ fs.mkdirSync(dataDir, { recursive: true }); const tmp = authFile + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(a)); fs.renameSync(tmp, authFile); }
+function writeAuth(a){ fs.mkdirSync(dataDir, { recursive: true }); writePrivate(authFile, JSON.stringify(a)); }
 function hashPin(pin, salt){ return crypto.scryptSync(String(pin), salt, 32).toString('hex'); }
 function makeToken(secret){ return crypto.createHmac('sha256', String(secret)).update('duetto-access').digest('hex'); }
 function reqToken(req){ const h = String(req.headers['authorization'] || ''); if (h.startsWith('Bearer ')) return h.slice(7); try { return String((req.query && req.query.token) || ''); } catch(e){ return ''; } }
+function tokenOk(t, secret){ try { const a=Buffer.from(String(t)); const b=Buffer.from(makeToken(secret)); return a.length===b.length && crypto.timingSafeEqual(a,b); } catch(e){ return false; } }
 app.use('/api', (req, res, next) => {
-  if (req.path === '/auth/status' || req.path === '/auth/setup' || req.path === '/auth/login') return next();
+  if (req.path === '/auth/status' || req.path === '/auth/setup' || req.path === '/auth/login' || req.path === '/health') return next();
   const a = readAuth();
-  if (!a) return next(); // 尚未设 PIN：放行（前端首屏会强制引导设置）
-  const t = reqToken(req);
-  if (t && t === makeToken(a.secret)) return next();
+  if (!a) return res.status(401).json({ ok: false, error: 'not configured — set a PIN first' }); // 未配置：关门，只放行 auth 端点
+  if (tokenOk(reqToken(req), a.secret)) return next();
   res.status(401).json({ ok: false, error: 'unauthorized' });
 });
+const _loginHits = {};
 app.get('/api/auth/status', (_q, r) => r.json({ ok: true, configured: !!readAuth() }));
 app.post('/api/auth/setup', (q, r) => { if (readAuth()) return r.status(409).json({ ok: false, error: 'already configured' }); const pin = String((q.body || {}).pin || ''); if (pin.length < 4) return r.status(400).json({ ok: false, error: 'PIN 至少 4 位' }); const salt = crypto.randomBytes(16).toString('hex'); const secret = crypto.randomBytes(32).toString('hex'); writeAuth({ salt, hash: hashPin(pin, salt), secret, created: Date.now() }); r.json({ ok: true, token: makeToken(secret) }); });
-app.post('/api/auth/login', (q, r) => { const a = readAuth(); if (!a) return r.status(400).json({ ok: false, error: 'not configured' }); const pin = String((q.body || {}).pin || ''); if (hashPin(pin, a.salt) !== a.hash) return r.status(401).json({ ok: false, error: 'PIN 不对' }); r.json({ ok: true, token: makeToken(a.secret) }); });
-app.get('/api/health',(_q,r)=>r.json({ok:true,mode:'self-host',version:'0.2.0'}));
+app.post('/api/auth/login', async (q, r) => { const a = readAuth(); if (!a) return r.status(400).json({ ok: false, error: 'not configured' }); const ip = String(req_ip(q)); const now = Date.now(); const rec = _loginHits[ip] || { n: 0, until: 0 }; if (rec.until > now) return r.status(429).json({ ok: false, error: '尝试太频繁，稍后再试' }); const pin = String((q.body || {}).pin || ''); let h; try { h = await new Promise((res, rej) => crypto.scrypt(String(pin), a.salt, 32, (e, k) => e ? rej(e) : res(k.toString('hex')))); } catch(e){ return r.status(500).json({ ok:false }); } const ok = h.length === a.hash.length && crypto.timingSafeEqual(Buffer.from(h), Buffer.from(a.hash)); if (!ok) { rec.n++; if (rec.n >= 5) { rec.until = now + Math.min(15*60000, 1000 * Math.pow(2, rec.n - 5)); } _loginHits[ip] = rec; return r.status(401).json({ ok: false, error: 'PIN 不对' }); } delete _loginHits[ip]; r.json({ ok: true, token: makeToken(a.secret) }); });
+function req_ip(q){ try { return (String(q.headers['x-forwarded-for']||'').split(',')[0].trim()) || (q.socket && q.socket.remoteAddress) || 'ip'; } catch(e){ return 'ip'; } }
+app.get('/api/health',(_q,r)=>r.json({ok:true,mode:'self-host',version:'1.0.0'}));
 app.get('/api/config',(_q,r)=>{ const s=getSettings(); r.json({ok:true,config:{companion:{name:s.ai_name,has_key:Boolean(s.ai.api_key),model:s.ai.model},user:{display_name:s.user_name},room:{title:s.room_name,subtitle:s.room_sub}}}); });
 app.get('/api/settings',(_q,r)=>{ r.json({ok:true,settings:redactSettings(getSettings())}); });
 app.post('/api/settings',(q,r)=>{ try{ const cur=getSettings(); const b=q.body||{}; const bai={...(b.ai||{})}; const hasOwn=(o,k)=>Object.prototype.hasOwnProperty.call(o,k); const apiKeyProvided=!!(bai.api_key&&!/^\*/.test(String(bai.api_key))); const aKeyProvided=!!(bai.a_key&&!/^\*/.test(String(bai.a_key))); const baseChanging=hasOwn(bai,'base_url')&&String(bai.base_url||'')!==String((cur.ai&&cur.ai.base_url)||''); const aBaseChanging=hasOwn(bai,'a_base')&&String(bai.a_base||'')!==String((cur.ai&&cur.ai.a_base)||''); if(!apiKeyProvided)delete bai.api_key; if(!aKeyProvided)delete bai.a_key; delete bai.has_key; delete bai.key_hint; delete bai.has_a_key; delete bai.a_key_hint; const next={...cur,...b,ai:{...cur.ai,...bai}}; if(baseChanging&&!apiKeyProvided)next.ai.api_key=''; if(aBaseChanging&&!aKeyProvided)next.ai.a_key=''; fs.mkdirSync(dataDir,{recursive:true}); writePrivate(settingsFile,JSON.stringify(next,null,2)); r.json({ok:true,settings:redactSettings(next)}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-app.post('/api/models',async(q,r)=>{ try{ const {base_url,api_key}=q.body||{}; if(!base_url)return r.status(400).json({ok:false,error:'base_url required'}); const base=String(base_url).replace(/\/+$/,''); if(!/^https:\/\//.test(base)) return r.status(400).json({ok:false,error:'base_url must be https'}); const rr=await fetchT(base+'/models',{headers:api_key?{Authorization:'Bearer '+api_key}:{}},15000); if(!rr.ok){const t=await rr.text().catch(()=>'');return r.status(502).json({ok:false,error:'models '+rr.status+': '+t.slice(0,200)});} const d=await rr.json(); const arr=Array.isArray(d)?d:(d.data||d.models||[]); r.json({ok:true,models:arr.map(m=>typeof m==='string'?m:(m.id||m.name||m.model||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b,'zh-Hans-CN'))}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-function mergeAi(base,over){ const out={...base}; if(over&&typeof over==='object'){ for(const k of ['model','persona','style','ai_name','user_name','time_aware','reply_mode','context_url','a_model']){ const v=over[k]; if(v!==undefined&&v!==null&&v!=='')out[k]=v; } if(over.base_url&&over.api_key){ out.base_url=over.base_url; out.api_key=over.api_key; } if(over.a_base&&over.a_key){ out.a_base=over.a_base; out.a_key=over.a_key; } } return out; }
+app.post('/api/models',async(q,r)=>{ try{ const {base_url,api_key}=q.body||{}; if(!base_url)return r.status(400).json({ok:false,error:'base_url required'}); const base=String(base_url).replace(/\/+$/,''); if(!/^https:\/\//.test(base)) return r.status(400).json({ok:false,error:'base_url must be https'}); try{ await assertPublicUrl(base); }catch(e){ return r.status(400).json({ok:false,error:'endpoint not allowed'}); } const rr=await fetchT(base+'/models',{headers:api_key?{Authorization:'Bearer '+api_key}:{},redirect:'error'},15000); if(!rr.ok){return r.status(502).json({ok:false,error:'models endpoint returned '+rr.status});} const d=await rr.json(); const arr=Array.isArray(d)?d:(d.data||d.models||[]); r.json({ok:true,models:arr.map(m=>typeof m==='string'?m:(m.id||m.name||m.model||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b,'zh-Hans-CN'))}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+function mergeAi(base,over){ const out={...base}; if(over&&typeof over==='object'){ for(const k of ['model','persona','style','ai_name','user_name','time_aware','reply_mode','a_model']){ const v=over[k]; if(v!==undefined&&v!==null&&v!=='')out[k]=v; } if(over.base_url&&over.api_key){ out.base_url=over.base_url; out.api_key=over.api_key; } if(over.a_base&&over.a_key){ out.a_base=over.a_base; out.a_key=over.a_key; } } return out; }
+// ═══ SSRF 防线：解析主机名，若任一 IP 落在私网/环回/链路本地段则拒绝 ═══
+function isPrivateIp(ip){
+  if(!ip) return true;
+  if(net.isIPv4(ip)){
+    const p=ip.split('.').map(Number);
+    if(p[0]===10||p[0]===127||p[0]===0) return true;
+    if(p[0]===172&&p[1]>=16&&p[1]<=31) return true;
+    if(p[0]===192&&p[1]===168) return true;
+    if(p[0]===169&&p[1]===254) return true;               // link-local / cloud metadata
+    if(p[0]===100&&p[1]>=64&&p[1]<=127) return true;      // CGNAT
+    if(p[0]>=224) return true;                             // multicast/reserved
+    return false;
+  }
+  const s=ip.toLowerCase();
+  if(s==='::1'||s==='::'||s.startsWith('fe80')||s.startsWith('fc')||s.startsWith('fd')) return true;
+  if(s.startsWith('::ffff:')) return isPrivateIp(s.slice(7));  // IPv4-mapped
+  return false;
+}
+async function assertPublicUrl(urlStr, { allowHttp=false } = {}){
+  let u; try { u = new URL(String(urlStr)); } catch(e){ throw new Error('bad url'); }
+  if(u.protocol!=='https:' && !(allowHttp && u.protocol==='http:')) throw new Error('scheme not allowed');
+  const host=u.hostname.replace(/^\[|\]$/g,'');
+  if(net.isIP(host)){ if(isPrivateIp(host)) throw new Error('private address'); return; }
+  const addrs=await dns.promises.lookup(host,{all:true});
+  if(!addrs.length) throw new Error('unresolved');
+  for(const a of addrs){ if(isPrivateIp(a.address)) throw new Error('resolves to private address'); }
+}
+// 有大小上限+超时的流式下载（防内存爆/慢速挂起）；redirect:'error' 防跨主机跳转绕过 SSRF 检查
+async function fetchCapped(urlStr, { maxBytes=30*1024*1024, timeoutMs=60000, headers={} } = {}){
+  const ac=new AbortController(); const t=setTimeout(()=>ac.abort(), timeoutMs);
+  try {
+    const rr=await fetch(urlStr,{ headers, redirect:'error', signal:ac.signal });
+    const ct=String(rr.headers.get('content-type')||'').toLowerCase();
+    const finalUrl=String(rr.url||'');
+    const reader=rr.body && rr.body.getReader ? rr.body.getReader() : null;
+    if(!reader){ const b=Buffer.from(await rr.arrayBuffer()); if(b.length>maxBytes) throw new Error('too large'); return { buf:b, ct, finalUrl }; }
+    const chunks=[]; let total=0;
+    for(;;){ const {done,value}=await reader.read(); if(done) break; total+=value.length; if(total>maxBytes){ try{ac.abort();}catch(e){} throw new Error('too large'); } chunks.push(Buffer.from(value)); }
+    return { buf:Buffer.concat(chunks), ct, finalUrl };
+  } finally { clearTimeout(t); }
+}
 function timeBucket(h){ if(h<5)return '深夜'; if(h<9)return '清晨'; if(h<12)return '上午'; if(h<14)return '午间'; if(h<18)return '下午'; if(h<23)return '晚上'; return '深夜'; }
 // 外部记忆接口（可选）：settings.ai.context_url 指向部署者自己的记忆/召回服务，
 // 每次对话 POST {message, song, user, ai}，把返回的 {context} 文本注入提示词——新用户接自己的记忆体系用
 async function fetchContext(s, prompt, np){
-  const u = s.ai && s.ai.context_url; if (!u || !/^https?:/.test(String(u))) return '';
+  const u = s.ai && s.ai.context_url; if (!u || !/^https:/.test(String(u))) return '';
   try {
+    await assertPublicUrl(String(u));
     const rr = await fetchT(String(u), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ message:String(prompt||''), song: np?{id:np.id,title:np.title,artist:np.artist}:null, user:(s.ai.user_name||''), ai:(s.ai.ai_name||'') }) }, 4000);
     if (!rr.ok) return '';
     const d = await rr.json().catch(()=>null);
@@ -102,9 +148,11 @@ function tlabel(ts){ try { const d = new Date(ts); return (d.getMonth()+1) + '/'
 function countPlays(sid){ try { const r = db.prepare('SELECT COUNT(*) AS c FROM plays WHERE id=?').get(String(sid)); return (r && r.c) || 0; } catch(e){ return 0; } }
 const IMPRESSION_EVERY = 6; // 在场记录每满 6 条，滚动总结一次印象
 const _imBusy = {};
+const _imFail = {}; // sid -> ts：印象生成失败退避
 function maybeImpress(s, sid, title, artist){
   try {
     if (!sid || _imBusy[sid]) return;
+    if (_imFail[sid] && (Date.now() - _imFail[sid]) < 600000) return; // 近期失败过，退避 10 分钟
     const notes = readNotes(sid);
     const impr = readImpression(sid);
     const n0 = impr ? (impr.n || 0) : 0;
@@ -112,7 +160,7 @@ function maybeImpress(s, sid, title, artist){
     _imBusy[sid] = 1;
     (async () => {
       try {
-        const fresh = notes.slice(n0);
+        const fresh = notes.slice(n0).slice(-30); // 上限 30 条，防提示词无限膨胀
         const who2 = (s.ai && s.ai.user_name) || 'TA';
         const lines = fresh.map(n => '[' + tlabel(n.ts) + '] ' + (n.passage ? ('歌词「' + n.passage + '」') : '') + (n.thought ? (' ' + who2 + '说：' + n.thought) : '') + (n.reply ? (' 我回：' + String(n.reply).slice(0, 200)) : '')).join('\n');
         let head = '把你和' + who2 + '一起听《' + (title || '') + '》' + (artist ? ('—' + artist) : '') + '的这些片段，揉成一段第一人称回忆总结。';
@@ -125,7 +173,7 @@ function maybeImpress(s, sid, title, artist){
           db.prepare('UPDATE songs SET mem_summary=?, mem_summary_n=?, mem_summary_at=? WHERE id=?').run(text, notes.length, now2, sid);
           db.prepare('INSERT INTO song_impressions(song_id,text,n,ts) VALUES(?,?,?,?)').run(sid, text, notes.length, now2);
         }
-      } catch(e){} finally { delete _imBusy[sid]; }
+      } catch(e){ _imFail[sid] = Date.now(); } finally { delete _imBusy[sid]; }
     })();
   } catch(e){}
 }
@@ -173,6 +221,7 @@ async function enrichNp(s, np){
 // —— 听后印象：对话时若正在放的歌还没有分析，就后台生成一份（服务端自己拉歌词）；
 // 已有分析则注入对话上下文 —— 让 AI 是"真听过这首歌"的状态
 const _anBusy = {};
+const _anFail = {}; // sid -> ts：失败退避，1 小时内不重试
 function ensureAnalysis(s, np){
   try {
     if(!np || !np.id || !/^\d+$/.test(String(np.id))) return null;
@@ -180,6 +229,7 @@ function ensureAnalysis(s, np){
     const hit = readAnalysis(sid);
     if (hit) return hit.text;
     if (_anBusy[sid]) return _anBusy[sid];
+    if (_anFail[sid] && (Date.now() - _anFail[sid]) < 3600000) return null; // 近期失败过，先不重试
     const _pr = (async () => {
       try {
         let lrc = '';
@@ -196,11 +246,10 @@ function ensureAnalysis(s, np){
           if (!aurl) { try { const su = await ncm.song_url({ id: sid, cookie: ncmCookie }); aurl = (su.body && su.body.data && su.body.data[0] && su.body.data[0].url) || ''; } catch(e){} }
           if (!aurl && /^\d+$/.test(sid)) aurl = 'https://music.163.com/song/media/outer/url?id=' + sid + '.mp3';
           if (aurl) {
-            const rr = await fetch(aurl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://music.163.com/' }, redirect: 'follow' });
-            const buf = Buffer.from(await rr.arrayBuffer());
-            const ct = String(rr.headers.get('content-type') || '').toLowerCase();
-            const isAudio = buf.length > 20000 && !String(rr.url || '').includes('/404') && (ct.includes('audio') || ct.includes('mpeg') || ct.includes('octet-stream') || buf.slice(0, 3).toString() === 'ID3' || (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0));
-            if (isAudio && buf.length < 30 * 1024 * 1024) audioB64 = buf.toString('base64');
+            await assertPublicUrl(aurl, { allowHttp: true }); // 拦内网地址：SSRF 防线
+            const { buf, ct, finalUrl } = await fetchCapped(aurl, { maxBytes: 30*1024*1024, timeoutMs: 60000, headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://music.163.com/' } });
+            const isAudio = buf.length > 20000 && !String(finalUrl).includes('/404') && (ct.includes('audio') || ct.includes('mpeg') || ct.includes('octet-stream') || buf.slice(0, 3).toString() === 'ID3' || (buf[0] === 0xFF && (buf[1] & 0xE0) === 0xE0));
+            if (isAudio) audioB64 = buf.toString('base64');
           }
         } catch(e){ console.log('[analysis audio dl fail]', sid, e.message); }
         const head = (np.title || '这首歌') + (np.artist ? (' - ' + np.artist) : '');
@@ -220,8 +269,9 @@ function ensureAnalysis(s, np){
         }
         if (text) appendAnalysis({ id: sid, title: np.title || '', artist: np.artist || '', text, ts: Date.now() });
         console.log('[analysis]', sid, 'by', s2.ai.model, usedAudio ? '(audio)' : '(text)', text ? 'ok' : 'empty');
+        if (!text) _anFail[sid] = Date.now();
         return text || null;
-      } catch(e){ console.log('[analysis err]', sid, e.message); return null; } finally { delete _anBusy[sid]; }
+      } catch(e){ console.log('[analysis err]', sid, e.message); _anFail[sid] = Date.now(); return null; } finally { delete _anBusy[sid]; }
     })();
     _anBusy[sid] = _pr;
     return _pr;
@@ -338,10 +388,10 @@ app.get('/api/listen-stats',async(q,r)=>{
 
 app.use(express.static(path.join(rootDir,'frontend')));
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 512 * 1024 });
 const rooms = new Map();
 wss.on('connection', (sock, req) => {
-  try { const a = readAuth(); if (a) { const u = new URL(req.url, 'http://x'); const t = u.searchParams.get('token') || ''; if (t !== makeToken(a.secret)) { sock.close(4401, 'unauthorized'); return; } } } catch(e){}
+  { let ok = false; try { const a = readAuth(); if (a) { const t = new URL(req.url, 'http://x').searchParams.get('token') || ''; ok = tokenOk(t, a.secret); } } catch(e){ ok = false; } if (!ok) { try { sock.close(4401, 'unauthorized'); } catch(e){} return; } }
   let room = 'main';
   try { room = new URL(req.url, 'http://x').searchParams.get('room') || 'main'; } catch (e) {}
   if (!rooms.has(room)) rooms.set(room, new Set());
