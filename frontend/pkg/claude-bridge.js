@@ -1,0 +1,54 @@
+(function(){
+  var API=window.__LS_API||'/api';
+  // 取当前在放的歌：优先显式传入，其次全局 __lsNowPlaying / ncmSong
+  function nowPlaying(opts){
+    if(opts&&opts.nowPlaying)return opts.nowPlaying;
+    var g=window.__lsNowPlaying;
+    if(g&&g.title)return {title:g.title,artist:g.artist||''};
+    var n=window.ncmSong;
+    if(n&&n.title)return {title:n.title,artist:n.artist||''};
+    return null;
+  }
+  function historyOf(opts){
+    var h=(opts&&opts.history);
+    return Array.isArray(h)?h:null;
+  }
+  // 组装发给后端的 ai 对象：含部署者/用户人设 persona + 可选自定义端点密钥
+  function aiConfig(){
+    var mm=(window.__lsStore&&window.__lsStore.model)||{};
+    var m=mm.chat||mm;
+    var ai={};
+    if(m.endpoint&&m.key){
+      ai.base_url=m.endpoint;ai.api_key=m.key;
+      var mn=m.name||m.model||'';
+      if(mn)ai.model=mn; // 空 model 不发：否则会覆盖服务端 settings 里的模型名，上游报 model name empty
+    }
+    var persona=(window.__lsStore&&window.__lsStore.persona)||'';
+    if(persona)ai.persona=persona;
+    return ai;
+  }
+  function fetchComplete(prompt, ai, np, history){
+    var body={kind:'music',prompt:String(prompt||''),ai:ai};
+    if(np)body.nowPlaying=np;
+    if(history)body.history=history;
+    return fetch(API+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(function(r){return r.json();})
+      .then(function(d){ if(d&&d.ok)return d.reply||''; return '[AI not set up yet - add your endpoint + key in Settings or the Model tab]'; })
+      .catch(function(e){ return '[AI error: '+(e&&e.message||e)+']'; });
+  }
+  function complete(prompt, opts){
+    var ai=aiConfig();
+    var np=nowPlaying(opts);
+    var history=historyOf(opts);
+    // WS 通道只转发 prompt+ai：把上下文一并挂进 ai，后端 WS 处理器会读取
+    if(window.__LS_SYNC&&window.__LS_SYNC.aiSend){
+      var wsAi={};
+      for(var k in ai)wsAi[k]=ai[k];
+      if(np)wsAi.nowPlaying=np;
+      if(history)wsAi.history=history;
+      return window.__LS_SYNC.aiSend(String(prompt||''), wsAi).then(function(reply){ return (reply!=null)?reply:fetchComplete(prompt, ai, np, history); });
+    }
+    return fetchComplete(prompt, ai, np, history);
+  }
+  window.claude={ complete: complete, ask: complete };
+})();

@@ -1,0 +1,15 @@
+{
+  "name": "luciola-listen",
+  "version": "1.0.0",
+  "description": "Self-hostable listen-together app with a bring-your-own-AI companion.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.mjs"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "NeteaseCloudMusicApi": "^4.32.0",
+    "ws": "^8.21.0"
+  },
+  "license": "MIT"
+}
