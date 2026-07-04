@@ -79,6 +79,19 @@ function LSAskBar({ song, passage, onClear, onSaved }) {
     setBusy(true); setReply(null); setUsedChip(chip ? chip.k : null);
     const out = await lsAskAI({ passage, think: think.trim(), chipPrompt: chip ? chip.prompt : '', song });
     setReply(out); setBusy(false);
+    // 在场记录落库（挂在这首歌上；满 6 条服务端自动总结成"印象"）
+    try {
+      fetch((window.__LS_API || '/api') + '/song-note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: song.id, title: song.title, artist: song.artist || '', passage: passage || '', thought: think.trim(), reply: out }) }).catch(function () {});
+    } catch (e) {}
+    // 问答同时进房间时间线（回房间就能看到这段）
+    try {
+      if (window.__LS_SYNC && window.__LS_SYNC.send) {
+        const d0 = new Date(); const tm = (d0.getHours() < 10 ? '0' : '') + d0.getHours() + ':' + (d0.getMinutes() < 10 ? '0' : '') + d0.getMinutes();
+        const qTxt = ((passage ? ('「' + passage + '」') : '') + ' ' + (think.trim() || (chip ? chip.label : ''))).trim();
+        if (qTxt) window.__LS_SYNC.send({ t: 'chat', msg: { who: 'eve', t: qTxt, time: tm } });
+        if (out) window.__LS_SYNC.send({ t: 'chat', msg: { who: 'yu', t: out, time: tm } });
+      }
+    } catch (e) {}
     // 写入档案
     const s = window.__lsStore;
     s.archive.unshift({ id: 'a' + Date.now(), songId: song.id, title: song.title, artist: song.artist,

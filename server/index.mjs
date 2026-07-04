@@ -27,8 +27,59 @@ function sysPrompt(s,kind,np){ const who=s.ai.ai_name||s.ai_name||'DJ',partner=s
  const dj='你可以控制播放器。当你想放某首歌/切歌/暂停/继续时，在回复的最后单独一行输出：<<ACT>>{"type":"play","query":"歌名 歌手"}<<>>（play 需要 query；下一首用 type:"next"、上一首 "prev"、暂停 "pause"、继续 "resume"，这些不需要 query）。想把一首歌推荐给对方但不打断当前播放时，单独一行输出：<<ACT>>{"type":"share","query":"歌名 歌手"}<<>>；分享当前正在放的这首用 {"type":"share"}（不带 query），会在房间里弹出分享卡片。正常聊天时不要输出 ACT，也不要解释这个格式。';
  let timeLine='';
  if(s.ai.time_aware!==false&&String(s.ai.time_aware)!=='false'){ try{ const now=new Date(); const cn=now.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); const h=Number(now.toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit'})); timeLine='现在是'+cn+'（'+timeBucket(h)+'）。'; }catch(e){} }
- const nowLine=(np&&np.title)?('现在正在一起听的歌是【'+np.title+(np.artist?(' — '+np.artist):'')+'】，自然地结合它来回应。'+((np.vibe)?('\n你之前认真听过这首歌，你的听后印象（背景，别复述）：'+np.vibe):'')):'';
+ let nowLine='';
+ if(np&&np.title){
+   nowLine='现在正在一起听的歌是【'+np.title+(np.artist?(' — '+np.artist):'')+'】'
+     +((np.pos!=null&&np.dur)?('，正在听到 '+fmtSec(np.pos)+' / '+fmtSec(np.dur)):'')
+     +((np.plays>1)?('。这首歌你们一起听过 '+np.plays+' 次'):'')+'。自然地结合它来回应。';
+   if(np.analysis) nowLine+='\n[歌曲分析 · 你认真听过这首歌]\n'+np.analysis;
+   if(np.impression) nowLine+='\n[这首歌的印象 · 你们一起听它的回忆]\n'+np.impression;
+   else if(np.notes&&np.notes.length) nowLine+='\n[这首歌最近的在场记录]\n'+np.notes.map(n=>'- '+(n.passage?('歌词「'+n.passage+'」'):'')+(n.thought?(' 她说：'+n.thought):'')+(n.reply?(' 你回：'+String(n.reply).slice(0,80)):'')).join('\n');
+ }
  return [s.ai.persona,ident,fmt,dj,timeLine,nowLine].filter(Boolean).join('\n\n'); }
+// —— 在场记录（问Ta 的问答挂歌落库）与"印象"（记录满 6 条滚动总结成回忆） ——
+const notesFile = path.join(dataDir, 'song-notes.jsonl');
+const imprFile = path.join(dataDir, 'song-impressions.jsonl');
+function readJsonl(file){ try { return fs.readFileSync(file,'utf8').trim().split('\n').map(l=>{ try{ return JSON.parse(l); }catch(e){ return null; } }).filter(Boolean); } catch(e) { return []; } }
+function readNotes(sid, limit){ const all=readJsonl(notesFile).filter(n=>String(n.id)===sid); return limit?all.slice(-limit):all; }
+function readImpression(sid){ const all=readJsonl(imprFile).filter(n=>String(n.id)===sid); return all.length?all[all.length-1]:null; }
+function countPlays(sid){ return readJsonl(listenFile).filter(e=>String(e.id)===sid).length; }
+const IMPRESSION_EVERY = 6; // 在场记录每满 6 条，滚动总结一次印象
+const _imBusy = {};
+function maybeImpress(s, sid, title, artist){
+  try {
+    if (!sid || _imBusy[sid]) return;
+    const notes = readNotes(sid);
+    const impr = readImpression(sid);
+    const n0 = impr ? (impr.n || 0) : 0;
+    if (notes.length - n0 < IMPRESSION_EVERY) return;
+    _imBusy[sid] = 1;
+    (async () => {
+      try {
+        const fresh = notes.slice(n0);
+        const lines = fresh.map(n => '- ' + (n.passage ? ('歌词「' + n.passage + '」') : '') + (n.thought ? (' 她说：' + n.thought) : '') + (n.reply ? (' 你回：' + String(n.reply).slice(0, 120)) : '')).join('\n');
+        let head = '把下面这些「你和她一起听《' + (title || '') + '》' + (artist ? ('—' + artist) : '') + '时的片段」揉成一段150字内的第一人称回忆印象：写你俩和这首歌的故事、她被哪些句子戳到、情绪的流变。温柔具体有质感，直接出正文，不要分点、不要标签。';
+        if (impr && impr.text) head += '\n这是之前的印象，在它基础上自然续写，别推翻：\n' + impr.text;
+        const text = await callLLM(s, [{ role: 'system', content: head }, { role: 'user', content: '新片段：\n' + lines }]);
+        if (text) { fs.mkdirSync(dataDir,{recursive:true}); fs.appendFileSync(imprFile, JSON.stringify({ id: sid, text, n: notes.length, ts: Date.now() }) + '\n'); }
+      } catch(e){} finally { delete _imBusy[sid]; }
+    })();
+  } catch(e){}
+}
+app.post('/api/song-note',(q,r)=>{ try{ const b=q.body||{}; const sid=String(b.id||''); if(!sid) return r.json({ok:false}); fs.mkdirSync(dataDir,{recursive:true}); fs.appendFileSync(notesFile, JSON.stringify({ id:sid, title:String(b.title||''), artist:String(b.artist||''), passage:String(b.passage||''), thought:String(b.thought||''), reply:String(b.reply||''), ts:Date.now() })+'\n'); const s0=getSettings(); const s2={...s0, ai:mergeAi(s0.ai, b.ai)}; if(s2.ai.api_key) maybeImpress(s2, sid, b.title, b.artist); r.json({ok:true}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+function fmtSec(x){ x=Math.max(0,Math.floor(Number(x)||0)); return Math.floor(x/60)+':'+String(x%60).padStart(2,'0'); }
+// 组装"正在播"的完整上下文：进度 / 播放次数 / 歌曲分析 / 印象（或在场记录）
+function enrichNp(s, np){
+  if(!np || !np.id || !/^\d+$/.test(String(np.id))) return np;
+  const sid = String(np.id);
+  try { np.plays = countPlays(sid); } catch(e){}
+  const a = readAnalysis(sid);
+  if (a) np.analysis = a.text; else ensureAnalysis(s, np);
+  const im = readImpression(sid);
+  if (im) np.impression = im.text;
+  else { const ns = readNotes(sid, IMPRESSION_EVERY); if (ns.length) np.notes = ns; }
+  return np;
+}
 // —— 听后印象：对话时若正在放的歌还没有分析，就后台生成一份（服务端自己拉歌词）；
 // 已有分析则注入对话上下文 —— 让 AI 是"真听过这首歌"的状态（对齐 luciola 的设计）
 const _anBusy = {};
@@ -56,7 +107,7 @@ function ensureAnalysis(s, np){
   } catch(e) { return null; }
 }
 async function callLLM(s,messages,over){ const base=String(s.ai.base_url||'').replace(/\/+$/,''); if(!s.ai.api_key)throw Object.assign(new Error('AI not configured'),{status:503}); const rr=await fetch(base+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.ai.api_key},body:JSON.stringify({model:(over&&over.model)||s.ai.model,temperature:0.9,max_tokens:1024,messages})}); if(!rr.ok){const t=await rr.text().catch(()=>'');throw Object.assign(new Error('LLM '+rr.status+': '+t.slice(0,200)),{status:502});} const d=await rr.json(); return (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(); }
-app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ const vibe=ensureAnalysis(s,np); if(vibe) np.vibe=vibe; } const reply=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np)},...past,{role:'user',content:String(prompt)}]); r.json({ok:true,reply}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
+app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ enrichNp(s,np); } const reply=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np)},...past,{role:'user',content:String(prompt)}]); r.json({ok:true,reply}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— Song analysis: cached per song id (data/song-analysis.jsonl) so each song is analyzed once ——
 const analysisFile = path.join(dataDir, 'song-analysis.jsonl');
 function readAnalysis(sid){
@@ -158,7 +209,7 @@ wss.on('connection', (sock, req) => {
         const np = m.nowPlaying || (m.ai && m.ai.nowPlaying) || null;
         const hist = m.history || (m.ai && m.ai.history) || [];
         const past = Array.isArray(hist) ? hist.slice(-12).filter(x=>x&&x.role&&typeof x.content==='string') : [];
-        if (np) { const vibe = ensureAnalysis(eff, np); if (vibe) np.vibe = vibe; }
+        if (np) { enrichNp(eff, np); }
         const reply = await callLLM(eff, [{ role:'system', content: sysPrompt(eff, 'music', np) }, ...past, { role:'user', content: String(m.prompt||'') }]);
         sock.send(JSON.stringify({ t:'ai', id:m.id, reply }));
       } catch(e) { sock.send(JSON.stringify({ t:'ai', id:m.id, reply:'[AI error: '+e.message+']' })); }

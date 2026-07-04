@@ -838,6 +838,7 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
       ".lsr-row.other{justify-content:flex-start}",
       ".lsr-ava{width:42px;height:42px;border-radius:50%;overflow:hidden;flex-shrink:0;background:var(--ls-panel2)}",
       ".lsr-ava .ls-w-face,.lsr-ava image-slot{width:100%;height:100%;display:block}",
+      ".lsr-ava.ghost{visibility:hidden}",
       ".lsr-col{display:flex;flex-direction:column;gap:4px;min-width:0;max-width:min(76%,300px)}",
       ".lsr-chat.noava .lsr-col{max-width:min(88%,360px)}",
       ".lsr-row.self .lsr-col{align-items:flex-end}",
@@ -918,21 +919,26 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
     if (tab !== 'chat' || !(window.claude && window.claude.complete)) return;
     setBusy(true);
     setChat(c => [...c, { who: 'yu', t: '…', time: lsNow(), pending: true }]);
+    // 带上房间最近的对话当上下文（宫殿式多轮，而不是每条都单轮）
+    const hist = chat.filter(m => m && !m.sys && !m.pending && m.t).slice(-12).map(m => ({ role: m.who === 'eve' ? 'user' : 'assistant', content: m.t }));
+    hist.push({ role: 'user', content: text });
     let reply = '';
-    try { reply = await window.claude.complete(text); } catch (e) { reply = ''; }
+    try { reply = await window.claude.complete(text, { history: hist.slice(0, -1) }); } catch (e) { reply = ''; }
     reply = String(reply || '');
     // AI DJ：抽取 <<ACT>>{...}<<>> 交给播放器执行，再从展示文本里删掉整段
     const ACT = /<<ACT>>(\{[\s\S]*?\})<<>>/;
     const m = reply.match(ACT);
     if (m) { try { const act = JSON.parse(m[1]); if (window.__lsRunAction) window.__lsRunAction(act); } catch (e) {} }
     const shown = reply.replace(/<<ACT>>(\{[\s\S]*?\})<<>>/g, '').trim();
-    const aiMsg = { who: 'yu', t: shown || '（放好了，一起听）', time: lsNow() };
+    // 分气泡：按换行拆成多条，像她在对面一条条发过来
+    const parts = shown.split(/\n+/).map(x => x.trim()).filter(Boolean);
+    const aiMsgs = (parts.length ? parts : ['（放好了，一起听）']).map(t2 => ({ who: 'yu', t: t2, time: lsNow() }));
     setChat(c => {
       const arr = c.slice();
-      for (let i = arr.length - 1; i >= 0; i--) { if (arr[i].pending) { arr[i] = aiMsg; break; } }
+      for (let i = arr.length - 1; i >= 0; i--) { if (arr[i].pending) { arr.splice(i, 1, ...aiMsgs); break; } }
       return arr;
     });
-    bcast(aiMsg);
+    aiMsgs.forEach(bcast);
     setBusy(false);
   };
 
@@ -1049,16 +1055,18 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
           if (m.sys || m.who === 'sys') return hideEvents ? null : <div key={i} className="lsr-event">{m.t}</div>;
           const self = m.who === 'eve';
           const s = m.songId && songById(m.songId);
+          const prev = chat[i - 1];
+          const firstOfRun = !prev || prev.sys || prev.who === 'sys' || prev.who !== m.who;
           return (
             <div key={i} className={'lsr-row ' + (self ? 'self' : 'other')}>
-              {!self && !hideAvas && <div className="lsr-ava"><LSFace who="yu" /></div>}
+              {!self && !hideAvas && (firstOfRun ? <div className="lsr-ava"><LSFace who="yu" /></div> : <div className="lsr-ava ghost"></div>)}
               <div className="lsr-col">
                 {m.t ? <div className="lsr-bubble">{m.t}</div> : null}
                 {m.share && (<div className="lsr-share" onClick={() => playSharedNcm(m.share)}><div className="cv"><LSCover cover={m.share.cover} shape="rounded" radius={10} size={120} /></div><div className="mn"><div className="eb">{(self ? eveName : yuName) + ' · 分享'}</div><b>{m.share.title}</b><span>{m.share.artist}</span></div><button className="pl" onClick={(e) => { e.stopPropagation(); playSharedNcm(m.share); }}>{String(song.id) === String(m.share.id) && isPlaying ? <span className="eq2"><i></i><i></i><i></i></span> : LSIcon.play()}</button></div>)}
                 {s && (<div className="lsr-share" onClick={() => playShared(s)}><div className="cv"><LSCover cover={s.cover} shape="rounded" radius={10} size={120} /></div><div className="mn"><div className="eb">{self ? 'You · 分享' : 'AI · 分享'}</div><b>{s.title}</b><span>{s.artist}</span></div><button className="pl" onClick={(e) => { e.stopPropagation(); playShared(s); }}>{LSIcon.play()}</button></div>)}
                 {m.time ? <div className="lsr-time">{m.time}</div> : null}
               </div>
-              {self && !hideAvas && <div className="lsr-ava"><LSFace who="eve" /></div>}
+              {self && !hideAvas && (firstOfRun ? <div className="lsr-ava"><LSFace who="eve" /></div> : <div className="lsr-ava ghost"></div>)}
             </div>
           );
         })}

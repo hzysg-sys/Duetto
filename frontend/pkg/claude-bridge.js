@@ -4,7 +4,7 @@
   function nowPlaying(opts){
     if(opts&&opts.nowPlaying)return opts.nowPlaying;
     var g=window.__lsNowPlaying;
-    if(g&&g.title)return {title:g.title,artist:g.artist||'',id:g.id||''};
+    if(g&&g.title){ var o={title:g.title,artist:g.artist||'',id:g.id||''}; try{ var au=window.__lsAudioEl; if(au&&au.duration&&isFinite(au.duration)){ o.pos=Math.floor(au.currentTime||0); o.dur=Math.floor(au.duration); } }catch(e){} return o; }
     var n=window.ncmSong;
     if(n&&n.title)return {title:n.title,artist:n.artist||''};
     return null;

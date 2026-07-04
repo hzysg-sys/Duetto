@@ -48,14 +48,13 @@ function lsSaveStore(s) { try { localStorage.setItem(LS_STORE_KEY, JSON.stringif
 
 // ── 问 Ta：调用 window.claude.complete 真实生成 ────────
 async function lsAskAI({ passage, think, chipPrompt, song }) {
+  // 人设/身份/时间/正在播都由统一的后端提示词体系组装，这里只描述这次动作
   const lines = [];
-  lines.push('你是 AI，一个温柔、亲密、略带文学性的 AI 伴侣。我们正在一起听歌。');
-  if (song) lines.push('正在听《' + song.title + '》— ' + song.artist + '。');
+  if (song && song.title) lines.push('我们在聊《' + song.title + '》' + (song.artist ? ('— ' + song.artist) : '') + ' 这首歌。');
   if (passage) lines.push('我引用了这句歌词：「' + passage + '」');
   if (think) lines.push('我说：「' + think + '」');
   if (chipPrompt) lines.push(chipPrompt);
-  lines.push('请你用第一人称、简短（1-3 句）、有画面感地回应我，像在我耳边轻声说话。'
-    + '不要分析歌词结构、不要客套、不要长篇大论。只用中文。');
+  lines.push('简短回应我（1-3 句），有画面感，像在我耳边轻声说。');
   const prompt = lines.join('\n');
   try {
     if (window.claude && window.claude.complete) {
