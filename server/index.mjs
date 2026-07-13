@@ -13,7 +13,28 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const dataDir = process.env.DUETTO_DATA_DIR || path.join(rootDir, 'data');
 const settingsFile = path.join(dataDir, 'settings.json');
 const PORT = Number(process.env.PORT || 4183);
-const DEFAULTS = { user_name:'You', ai_name:'DJ', room_name:'Our Room', room_sub:'', ai:{base_url:'',api_key:'',model:'',persona:''}, show_gallery:true, avatar_url:'', ai_avatar_url:'', background_url:'', theme:'' };
+const DEFAULT_ANALYSIS_BASE = process.env.DUETTO_ANALYSIS_BASE_URL || 'https://api.siliconflow.cn/v1';
+const DEFAULT_ANALYSIS_MODEL = process.env.DUETTO_ANALYSIS_MODEL || 'Qwen/Qwen3-Omni-30B-A3B-Instruct';
+const DEFAULTS = {
+  user_name: process.env.DUETTO_USER_NAME || 'You',
+  ai_name: process.env.DUETTO_AI_NAME || 'Elias',
+  room_name: process.env.DUETTO_ROOM_NAME || 'Our Room',
+  room_sub: '',
+  ai: {
+    base_url: process.env.DUETTO_CHAT_BASE_URL || process.env.CHAT_API_BASE || '',
+    api_key: process.env.DUETTO_CHAT_API_KEY || process.env.CHAT_API_KEY || '',
+    model: process.env.DUETTO_CHAT_MODEL || process.env.CHAT_MODEL_NAME || '',
+    persona: '',
+    a_base: DEFAULT_ANALYSIS_BASE,
+    a_key: process.env.DUETTO_ANALYSIS_API_KEY || process.env.SILICONFLOW_API_KEY || '',
+    a_model: DEFAULT_ANALYSIS_MODEL,
+  },
+  show_gallery: true,
+  avatar_url: '',
+  ai_avatar_url: '',
+  background_url: '',
+  theme: '',
+};
 function getSettings(){ try{ const r=JSON.parse(fs.readFileSync(settingsFile,'utf8')); return {...DEFAULTS,...r,ai:{...DEFAULTS.ai,...(r.ai||{})}}; }catch(e){ return {...DEFAULTS}; } }
 function redactSettings(s){ const out={...s,ai:{...(s&&s.ai||{})}}; if(out.ai.api_key){ out.ai.has_key=true; out.ai.key_hint='****'+String(out.ai.api_key).slice(-4); out.ai.api_key=''; } else { out.ai.has_key=false; out.ai.key_hint=''; } if(out.ai.a_key){ out.ai.has_a_key=true; out.ai.a_key_hint='****'+String(out.ai.a_key).slice(-4); out.ai.a_key=''; } else { out.ai.has_a_key=false; out.ai.a_key_hint=''; } return out; }
 function writePrivate(file, text){ const tmp=file+'.tmp'; fs.writeFileSync(tmp, text, { mode: 0o600 }); try{ fs.chmodSync(tmp, 0o600); }catch(e){} fs.renameSync(tmp, file); try{ fs.chmodSync(file, 0o600); }catch(e){} }
@@ -45,7 +66,15 @@ const app=express();
 app.use(express.json({limit:'2mb'}));
 // ═══ 应用级门禁：首次打开设 PIN，之后所有 /api/* 与 /ws 需要 token（网易云登录只是登网易账号，这道门才是应用自己的锁） ═══
 const authFile = path.join(dataDir, 'auth.json');
-function readAuth(){ try { return JSON.parse(fs.readFileSync(authFile, 'utf8')); } catch(e){ return null; } }
+const envPin = String(process.env.DUETTO_PIN || '');
+const envAuthSecret = String(process.env.DUETTO_AUTH_SECRET || '');
+function readEnvAuth(){
+  if (envPin.length < 4) return null;
+  const secret = envAuthSecret || crypto.createHash('sha256').update('duetto-auth:' + envPin).digest('hex');
+  const salt = crypto.createHash('sha256').update('duetto-salt:' + secret).digest('hex').slice(0, 32);
+  return { salt, hash: hashPin(envPin, salt), secret, created: 0, source: 'env' };
+}
+function readAuth(){ try { return JSON.parse(fs.readFileSync(authFile, 'utf8')); } catch(e){ return readEnvAuth(); } }
 function writeAuth(a){ fs.mkdirSync(dataDir, { recursive: true }); writePrivate(authFile, JSON.stringify(a)); }
 function hashPin(pin, salt){ return crypto.scryptSync(String(pin), salt, 32).toString('hex'); }
 function makeToken(secret){ return crypto.createHmac('sha256', String(secret)).update('duetto-access').digest('hex'); }
@@ -67,7 +96,7 @@ app.get('/api/health',(_q,r)=>r.json({ok:true,mode:'self-host',version:'1.0.0'})
 app.get('/api/config',(_q,r)=>{ const s=getSettings(); r.json({ok:true,config:{companion:{name:s.ai_name,has_key:Boolean(s.ai.api_key),model:s.ai.model},user:{display_name:s.user_name},room:{title:s.room_name,subtitle:s.room_sub}}}); });
 app.get('/api/settings',(_q,r)=>{ r.json({ok:true,settings:redactSettings(getSettings())}); });
 app.post('/api/settings',(q,r)=>{ try{ const cur=getSettings(); const b=q.body||{}; const bai={...(b.ai||{})}; const hasOwn=(o,k)=>Object.prototype.hasOwnProperty.call(o,k); const apiKeyProvided=!!(bai.api_key&&!/^\*/.test(String(bai.api_key))); const aKeyProvided=!!(bai.a_key&&!/^\*/.test(String(bai.a_key))); const baseChanging=hasOwn(bai,'base_url')&&String(bai.base_url||'')!==String((cur.ai&&cur.ai.base_url)||''); const aBaseChanging=hasOwn(bai,'a_base')&&String(bai.a_base||'')!==String((cur.ai&&cur.ai.a_base)||''); if(!apiKeyProvided)delete bai.api_key; if(!aKeyProvided)delete bai.a_key; delete bai.has_key; delete bai.key_hint; delete bai.has_a_key; delete bai.a_key_hint; const next={...cur,...b,ai:{...cur.ai,...bai}}; if(baseChanging&&!apiKeyProvided)next.ai.api_key=''; if(aBaseChanging&&!aKeyProvided)next.ai.a_key=''; fs.mkdirSync(dataDir,{recursive:true}); writePrivate(settingsFile,JSON.stringify(next,null,2)); r.json({ok:true,settings:redactSettings(next)}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-app.post('/api/models',async(q,r)=>{ try{ const {base_url,api_key}=q.body||{}; if(!base_url)return r.status(400).json({ok:false,error:'base_url required'}); const base=String(base_url).replace(/\/+$/,''); if(!/^https:\/\//.test(base)) return r.status(400).json({ok:false,error:'base_url must be https'}); try{ await assertPublicUrl(base); }catch(e){ return r.status(400).json({ok:false,error:'endpoint not allowed'}); } const rr=await fetchT(base+'/models',{headers:api_key?{Authorization:'Bearer '+api_key}:{},redirect:'error'},15000); if(!rr.ok){return r.status(502).json({ok:false,error:'models endpoint returned '+rr.status});} const d=await rr.json(); const arr=Array.isArray(d)?d:(d.data||d.models||[]); r.json({ok:true,models:arr.map(m=>typeof m==='string'?m:(m.id||m.name||m.model||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b,'zh-Hans-CN'))}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+app.post('/api/models',async(q,r)=>{ try{ const {base_url,api_key}=q.body||{}; if(!base_url)return r.status(400).json({ok:false,error:'base_url required'}); const base=String(base_url).replace(/\/+$/,''); if(!/^https:\/\//.test(base)) return r.status(400).json({ok:false,error:'base_url must be https'}); try{ await assertPublicUrl(base); }catch(e){ return r.status(400).json({ok:false,error:'endpoint not allowed'}); } const rr=await fetchT(apiEndpoint(base,'models'),{headers:api_key?{Authorization:'Bearer '+api_key}:{},redirect:'error'},15000); if(!rr.ok){return r.status(502).json({ok:false,error:'models endpoint returned '+rr.status});} const d=await rr.json(); const arr=Array.isArray(d)?d:(d.data||d.models||[]); r.json({ok:true,models:arr.map(m=>typeof m==='string'?m:(m.id||m.name||m.model||'')).filter(Boolean).sort((a,b)=>a.localeCompare(b,'zh-Hans-CN'))}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 function mergeAi(base,over){ const out={...base}; if(over&&typeof over==='object'){ for(const k of ['model','persona','style','ai_name','user_name','time_aware','reply_mode','a_model']){ const v=over[k]; if(v!==undefined&&v!==null&&v!=='')out[k]=v; } if(over.base_url&&over.api_key){ out.base_url=over.base_url; out.api_key=over.api_key; } if(over.a_base&&over.a_key){ out.a_base=over.a_base; out.a_key=over.a_key; } } return out; }
 // ═══ SSRF 防线：解析主机名，若任一 IP 落在私网/环回/链路本地段则拒绝 ═══
 function isPrivateIp(ip){
@@ -257,7 +286,7 @@ function ensureAnalysis(s, np){
         if (audioB64) {
           const prompt = '你会收到一首歌的完整音频。请真的去听这首歌（不要凭歌名或常识编造），然后用中文做一份分时间段的赏析。开头第一行写「' + head + '」。\n按时间顺序自然分段，尽量带上大致时间点（如 0:00、0:45、1:30）：曲式结构（前奏/主歌/副歌/桥段/尾奏分别在哪个时间段）；情绪走向随时间如何起伏；人声状态（真假声切换、气声、爆发力等细节）；编曲变化（乐器层次、动态的增减）；最戳人的几句歌词。总字数控制在 450 字以内（这段会被注入对话上下文）。' + (lrc ? ('\n\n[完整歌词，行首[分:秒]是时间轴，引用歌词以这里为准]\n' + String(lrc).slice(0, 6000)) : '');
           try {
-            text = await callLLM(s2, [{ role: 'user', content: [ { type: 'text', text: prompt }, { type: 'input_audio', input_audio: { data: audioB64, format: 'mp3' } } ] }], { timeout: 100000 });
+            text = await callLLM(s2, [{ role: 'user', content: [ { type: 'text', text: prompt }, audioInputPart(s2, audioB64) ] }], { timeout: 100000 });
           } catch(e){ console.log('[analysis audio llm fail]', sid, e.message.slice(0, 200)); }
           if (text) usedAudio = true;
         }
@@ -303,8 +332,21 @@ function parseReplies(text){
 function deStar(parts){ return parts.map(x=>String(x).replace(/^\*{1,2}([^*]+)\*{1,2}$/, '（$1）').replace(/\*{1,2}([^*\n]{1,60}?)\*{1,2}/g, '（$1）')); }
 // 分析模型三件套：只填了模型名就回落聊天端点密钥
 function withAnalysisAi(s){ const a=s.ai||{}; if(!(a.a_model||a.a_key||a.a_base)) return s; return { ...s, ai:{ ...a, base_url:a.a_base||a.base_url, api_key:a.a_key||a.api_key, model:a.a_model||a.model } }; }
+function audioInputPart(s, audioB64){
+  const base = String(s && s.ai && s.ai.base_url || '');
+  if (/siliconflow\.cn/i.test(base)) {
+    return { type:'audio_url', audio_url:{ url:'data:audio/mpeg;base64,' + audioB64 } };
+  }
+  return { type:'input_audio', input_audio:{ data:audioB64, format:'mp3' } };
+}
+function apiEndpoint(base, endpoint){
+  const clean = String(base || '').replace(/\/+$/, '');
+  if (endpoint === 'chat/completions' && /\/chat\/completions$/i.test(clean)) return clean;
+  const root = clean.replace(/\/chat\/completions$/i, '');
+  return root + '/' + endpoint;
+}
 async function fetchT(url,opts,ms){ const ac=new AbortController(); const t=setTimeout(function(){ ac.abort(); },ms||30000); try{ return await fetch(url,{...opts,signal:ac.signal}); } finally { clearTimeout(t); } }
-async function callLLM(s,messages,over){ const base=String(s.ai.base_url||'').replace(/\/+$/,''); if(!s.ai.api_key)throw Object.assign(new Error('AI not configured'),{status:503}); const rr=await fetchT(base+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.ai.api_key},body:JSON.stringify({model:(over&&over.model)||s.ai.model,temperature:0.9,max_tokens:1024,messages})},(over&&over.timeout)||45000); if(!rr.ok){const t=await rr.text().catch(()=>'');throw Object.assign(new Error('LLM '+rr.status+': '+t.slice(0,200)),{status:502});} const d=await rr.json(); return (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(); }
+async function callLLM(s,messages,over){ const base=String(s.ai.base_url||'').replace(/\/+$/,''); if(!s.ai.api_key)throw Object.assign(new Error('AI not configured'),{status:503}); const rr=await fetchT(apiEndpoint(base,'chat/completions'),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.ai.api_key},body:JSON.stringify({model:(over&&over.model)||s.ai.model,temperature:0.9,max_tokens:1024,messages})},(over&&over.timeout)||45000); if(!rr.ok){const t=await rr.text().catch(()=>'');throw Object.assign(new Error('LLM '+rr.status+': '+t.slice(0,200)),{status:502});} const d=await rr.json(); return (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(); }
 app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ if(bb.ai&&bb.ai.quote) np.quote=String(bb.ai.quote).slice(0,120); await enrichNp(s,np); } const ctx=await fetchContext(s, prompt, np); const raw=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np,ctx)},...past,{role:'user',content:String(prompt)}]); let reply, think=''; if(s.ai.reply_mode==='stream'){ const st=stripThinking(raw); reply=st.text; think=st.think; } else { reply=deStar(parseReplies(raw)).join('\n'); } if(!(bb.ai&&bb.ai.no_note)) logRoomNote(s, np, prompt, reply); r.json({ok:true,reply,think}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— Song analysis: cached per song id so each song is analyzed once ——
 function readAnalysis(sid){ try { return db.prepare("SELECT id,title,artist,text,ts FROM song_analysis WHERE id=? AND text!=''").get(String(sid)) || null; } catch(e){ return null; } }

@@ -245,11 +245,11 @@ function LSModelInline({ bump }) {
       </div>
 
       <div className="ls-model-group">
-        <div className="ls-model-gh">分析歌曲模型（通常填 gemini）</div>
+        <div className="ls-model-gh">分析歌曲模型（已预设低成本听歌模型）</div>
         <div className="ls-fld"><label>回应模型</label>
-          <input value={aName} onChange={e => setAName(e.target.value)} placeholder="google/gemini-2.5-flash" /></div>
+          <input value={aName} onChange={e => setAName(e.target.value)} placeholder="Qwen/Qwen3-Omni-30B-A3B-Instruct" /></div>
         <div className="ls-fld"><label>中转地址</label>
-          <input value={aEndpoint} onChange={e => setAEndpoint(e.target.value)} placeholder="https://api.anthropic.com" /></div>
+          <input value={aEndpoint} onChange={e => setAEndpoint(e.target.value)} placeholder="https://api.siliconflow.cn/v1" /></div>
         <div className="ls-fld"><label>回应 Key</label>
           <div className="ls-keyrow">
             <input type={aShow ? 'text' : 'password'} value={aKey} onChange={e => setAKey(e.target.value)} placeholder="sk-…" />

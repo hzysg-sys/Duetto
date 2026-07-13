@@ -4,6 +4,11 @@
    问 Ta 走 window.claude.complete 真实生成。 */
 
 const LS_STORE_KEY = 'ls-store-v1';
+const LS_ANALYSIS_PRESET = {
+  name: 'Qwen/Qwen3-Omni-30B-A3B-Instruct',
+  endpoint: 'https://api.siliconflow.cn/v1',
+  key: '',
+};
 
 // 快捷 chip：{ k(键), label(显示), prompt(给模型的引导) }
 const LS_ASK_CHIPS = [
@@ -19,7 +24,8 @@ function lsSeedStore() {
     archive: [],
     library: [],
     fm: [],
-    model: { chat: { name: '', endpoint: '', key: '' }, analysis: { name: '', endpoint: '', key: '' } },
+    model: { chat: { name: '', endpoint: '', key: '' }, analysis: { ...LS_ANALYSIS_PRESET } },
+    analysisPreset: 'siliconflow-v1',
   };
 }
 
@@ -36,6 +42,12 @@ function lsLoadStore() {
   if (s.style === undefined) s.style = '';
   if (!s.model.chat) s.model.chat = (s.model.name !== undefined && s.model.name !== null && s.model.chat === undefined && !s.model.analysis) ? { name: s.model.name || '', endpoint: s.model.endpoint || '', key: s.model.key || '' } : (s.model.chat || { name: '', endpoint: '', key: '' });
   if (!s.model.analysis) s.model.analysis = { name: '', endpoint: '', key: '' };
+  if (s.analysisPreset !== 'siliconflow-v1') {
+    if (!s.model.analysis.name && !s.model.analysis.endpoint && !s.model.analysis.key) {
+      s.model.analysis = { ...LS_ANALYSIS_PRESET };
+    }
+    s.analysisPreset = 'siliconflow-v1';
+  }
   if (s.model.analysis.name === 'google/gemini-2.5-flash' && !s.model.analysis.endpoint) s.model.analysis.name = '';
   window.__lsStore = s;
   return s;
