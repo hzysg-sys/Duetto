@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: meow-diary-duetto
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 24.18.0
+      - key: DUETTO_AI_NAME
+        value: Elias
+      - key: DUETTO_PIN
+        sync: false
+      - key: DUETTO_AUTH_SECRET
+        generateValue: true
+      - key: DUETTO_CHAT_BASE_URL
+        sync: false
+      - key: DUETTO_CHAT_API_KEY
+        sync: false
+      - key: DUETTO_CHAT_MODEL
+        sync: false
+      - key: DUETTO_ANALYSIS_BASE_URL
+        value: https://api.siliconflow.cn/v1
+      - key: DUETTO_ANALYSIS_MODEL
+        value: Qwen/Qwen3-Omni-30B-A3B-Instruct
+      - key: SILICONFLOW_API_KEY
+        sync: false
