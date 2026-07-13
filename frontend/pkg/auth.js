@@ -3,14 +3,19 @@
 (function(){
   if (window.__DUETTO_AUTH) return; window.__DUETTO_AUTH = 1;
   var TK = 'duetto-token';
+  var NK = 'duetto-ncm-session';
   function tok(){ try { return localStorage.getItem(TK) || ''; } catch(e){ return ''; } }
+  function ncmTok(){ try { return localStorage.getItem(NK) || ''; } catch(e){ return ''; } }
   window.__duettoToken = tok;
+  window.__duettoNcmSession = ncmTok;
+  window.__duettoSetNcmSession = function(v){ try { if(v) localStorage.setItem(NK, String(v)); } catch(e){} };
+  window.__duettoClearNcmSession = function(){ try { localStorage.removeItem(NK); } catch(e){} };
   var _f = window.fetch.bind(window);
   window.fetch = function(input, init){
     var url = ''; try { url = (typeof input === 'string') ? input : (input && input.url) || ''; } catch(e){}
     var api = window.__LS_API || '/api';
     var isApi = url.indexOf(api) === 0 || url.indexOf('/api/') === 0;
-    if (isApi) { init = init ? Object.assign({}, init) : {}; var t = tok(); var h = Object.assign({}, init.headers || {}); if (t) h['Authorization'] = 'Bearer ' + t; init.headers = h; }
+    if (isApi) { init = init ? Object.assign({}, init) : {}; var t = tok(); var h = Object.assign({}, init.headers || {}); if (t) h['Authorization'] = 'Bearer ' + t; var nt = ncmTok(); if (nt && url.indexOf('/ncm/') >= 0) h['X-Duetto-NCM'] = nt; init.headers = h; }
     return _f(input, init).then(function(r){ if (isApi && r && r.status === 401 && url.indexOf('/auth/') < 0) show('login'); return r; });
   };
   var el = null, showing = '';

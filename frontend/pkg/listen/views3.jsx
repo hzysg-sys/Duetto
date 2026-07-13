@@ -176,15 +176,16 @@ function LSPlaylistView(props) {
   const [login, setLogin] = v3UseState(false);
   const [qr, setQr] = v3UseState(null);
   const LSAPI = (typeof window !== 'undefined' && window.__LS_API) || '/api';
+  const clearNcmLocal = v3UseCallback(() => { if (window.__duettoClearNcmSession) window.__duettoClearNcmSession(); localStorage.removeItem('ls-ncm'); setNcmUser(''); }, []);
   v3UseEffect(() => {
     const st = window.__ncmCache && window.__ncmCache.status;
-    if (st != null) { if (st.logged) setNcmUser(st.nickname || '已登录'); return; }
-    if (window.__ncmStatus) window.__ncmStatus().then(d => { if (d && d.logged) setNcmUser(d.nickname || '已登录'); }).catch(() => {});
-  }, []);
+    if (st != null) { if (st.logged) setNcmUser(st.nickname || '已登录'); else if (st.needs_reconnect) clearNcmLocal(); return; }
+    if (window.__ncmStatus) window.__ncmStatus().then(d => { if (d && d.logged) setNcmUser(d.nickname || '已登录'); else if (d && d.needs_reconnect) clearNcmLocal(); }).catch(() => {});
+  }, [clearNcmLocal]);
   const openLogin = () => { setLogin(true); setQr(null); fetch(LSAPI + '/ncm/qr').then(r => r.json()).then(d => { if (d && d.ok) setQr(d); }).catch(() => {}); };
   v3UseEffect(() => {
     if (!login || !qr || !qr.key) return;
-    const t = setInterval(() => { fetch(LSAPI + '/ncm/check?key=' + encodeURIComponent(qr.key)).then(r => r.json()).then(c => { if (c && c.code === 803) { if (window.__ncmCacheClear) window.__ncmCacheClear(); setNcmUser(c.nickname || '已登录'); localStorage.setItem('ls-ncm', c.nickname || ''); setLogin(false); } else if (c && c.code === 800) { openLogin(); } }).catch(() => {}); }, 2500);
+    const t = setInterval(() => { fetch(LSAPI + '/ncm/check?key=' + encodeURIComponent(qr.key)).then(r => r.json()).then(c => { if (c && c.code === 803) { if (c.session && window.__duettoSetNcmSession) window.__duettoSetNcmSession(c.session); if (window.__ncmCacheClear) window.__ncmCacheClear(); setNcmUser(c.nickname || '已登录'); localStorage.setItem('ls-ncm', c.nickname || ''); setLogin(false); } else if (c && c.code === 800) { openLogin(); } }).catch(() => {}); }, 2500);
     return () => clearInterval(t);
   }, [login, qr]);
 
@@ -272,7 +273,7 @@ function LSPlaylistView(props) {
   const setCardBlur = props.setCardBlur || setCardBlurL;
   const setSkin     = props.setSkin     || setSkinL;
 
-  const doLogout = () => { fetch(LSAPI + '/ncm/logout', { method: 'POST' }).catch(() => {}); if (window.__ncmCacheClear) window.__ncmCacheClear(); localStorage.removeItem('ls-ncm'); setNcmUser(''); };
+  const doLogout = () => { fetch(LSAPI + '/ncm/logout', { method: 'POST' }).catch(() => {}); if (window.__ncmCacheClear) window.__ncmCacheClear(); clearNcmLocal(); };
 
   const songRow = (s, list, i) => (
     <div className="ls-songrow" key={(s.id || i) + '_' + i} onClick={() => onPlay(s, list)}>
