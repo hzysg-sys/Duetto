@@ -15,11 +15,9 @@ services:
         sync: false
       - key: DUETTO_AUTH_SECRET
         generateValue: true
-      - key: DUETTO_CHAT_BASE_URL
-        sync: false
-      - key: DUETTO_CHAT_API_KEY
-        sync: false
-      - key: DUETTO_CHAT_MODEL
+      - key: MEOW_DIARY_API_URL
+        value: https://meow-diary-backend.onrender.com
+      - key: MEOW_DIARY_API_TOKEN
         sync: false
       - key: DUETTO_ANALYSIS_BASE_URL
         value: https://api.siliconflow.cn/v1
