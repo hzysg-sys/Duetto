@@ -368,16 +368,31 @@ app.post('/api/song-analysis',async(q,r)=>{ try{ const s0=getSettings(); const b
 // —— NetEase Cloud Music: real QR login ——
 const ncmCookieFile = path.join(dataDir, 'ncm-cookie.txt');
 let ncmCookie = '';
+let ncmProfileCache = null;
+let ncmProfileCacheAt = 0;
+let ncmPlaylistsCache = { uid: '', at: 0, value: null };
 try { ncmCookie = fs.readFileSync(ncmCookieFile, 'utf8'); } catch (e) {}
-function saveNcmCookie(v){ ncmCookie = v || ''; try { fs.mkdirSync(dataDir,{recursive:true}); writePrivate(ncmCookieFile, ncmCookie); } catch(e){} }
-async function ncmProfile(){ if(!ncmCookie) return null; try{ const st=await ncm.login_status({ cookie: ncmCookie }); const p=st.body&&st.body.data&&st.body.data.profile; return p||null; }catch(e){ return null; } }
+function clearNcmSessionCache(){ ncmProfileCache=null; ncmProfileCacheAt=0; ncmPlaylistsCache={uid:'',at:0,value:null}; }
+function saveNcmCookie(v){ ncmCookie = v || ''; clearNcmSessionCache(); try { fs.mkdirSync(dataDir,{recursive:true}); writePrivate(ncmCookieFile, ncmCookie); } catch(e){} }
+async function ncmTimed(promise,label,timeoutMs=18000){ let timer; try{ return await Promise.race([promise,new Promise((_,reject)=>{ timer=setTimeout(()=>{ const e=new Error(label+'请求超时'); e.status=504; reject(e); },timeoutMs); })]); }finally{ if(timer) clearTimeout(timer); } }
+async function ncmProfile(){
+  if(!ncmCookie) return null;
+  const now=Date.now();
+  if(ncmProfileCache&&now-ncmProfileCacheAt<300000) return ncmProfileCache;
+  try{
+    const st=await ncmTimed(ncm.login_status({ cookie:ncmCookie }),'网易云登录状态');
+    const p=st.body&&st.body.data&&st.body.data.profile;
+    if(p){ ncmProfileCache=p; ncmProfileCacheAt=now; }
+    return p||null;
+  }catch(e){ return ncmProfileCache||null; }
+}
 app.get('/api/ncm/qr', async (_q,r)=>{ try{ const k=await ncm.login_qr_key({}); const key=k.body.data.unikey; const c=await ncm.login_qr_create({ key, qrimg:true }); r.json({ ok:true, key, qrimg:c.body.data.qrimg }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/check', async (q,r)=>{ try{ const key=q.query.key; const c=await ncm.login_qr_check({ key }); const code=c.body.code; if(code===803){ saveNcmCookie(c.body.cookie); const p=await ncmProfile(); r.json({ ok:true, code, logged:true, nickname:p&&p.nickname, avatar:p&&p.avatarUrl, uid:p&&p.userId }); } else { r.json({ ok:true, code, message:c.body.message||'' }); } }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/status', async (_q,r)=>{ const p=await ncmProfile(); if(p) r.json({ ok:true, logged:true, nickname:p.nickname, avatar:p.avatarUrl, uid:p.userId }); else r.json({ ok:true, logged:false }); });
 app.post('/api/ncm/logout', async (_q,r)=>{ saveNcmCookie(''); try{ fs.unlinkSync(ncmCookieFile); }catch(e){} r.json({ ok:true }); });
 // —— NetEase Cloud Music: real data (uses logged-in cookie) ——
 function ncmMapSong(s){ return { id:s.id, title:s.name, artist:(s.ar||s.artists||[]).map(a=>a.name).join(' / '), album:(s.al||s.album||{}).name||'', cover:(s.al||s.album||{}).picUrl||'', dur:Math.round((s.dt||s.duration||0)/1000) }; }
-app.get('/api/ncm/playlists', async (_q,r)=>{ try{ const p=await ncmProfile(); if(!p) return r.json({ok:true,logged:false,playlists:[]}); const pl=await ncm.user_playlist({ uid:p.userId, limit:100, cookie:ncmCookie }); const playlists=((pl.body&&pl.body.playlist)||[]).map(x=>({ id:x.id, name:x.name, count:x.trackCount, cover:x.coverImgUrl, mine:x.creator&&x.creator.userId===p.userId })); r.json({ ok:true, logged:true, playlists }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
+app.get('/api/ncm/playlists', async (_q,r)=>{ try{ const p=await ncmProfile(); if(!p) return r.json({ok:true,logged:false,playlists:[]}); const uid=String(p.userId); const now=Date.now(); if(ncmPlaylistsCache.uid===uid&&Array.isArray(ncmPlaylistsCache.value)&&now-ncmPlaylistsCache.at<60000) return r.json({ok:true,logged:true,playlists:ncmPlaylistsCache.value,cached:true}); const pl=await ncmTimed(ncm.user_playlist({uid:p.userId,limit:100,cookie:ncmCookie}),'网易云歌单',20000); const playlists=((pl.body&&pl.body.playlist)||[]).map(x=>({id:x.id,name:x.name,count:x.trackCount,cover:x.coverImgUrl,mine:x.creator&&x.creator.userId===p.userId})); ncmPlaylistsCache={uid,at:now,value:playlists}; r.json({ok:true,logged:true,playlists}); }catch(e){ if(Array.isArray(ncmPlaylistsCache.value)) return r.json({ok:true,logged:true,playlists:ncmPlaylistsCache.value,cached:true,stale:true}); r.status(e.status||500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/playlist', async (q,r)=>{ try{ const tr=await ncm.playlist_track_all({ id:q.query.id, limit:300, cookie:ncmCookie }); const songs=((tr.body&&tr.body.songs)||[]).map(ncmMapSong); r.json({ ok:true, songs }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/song-url', async (q,r)=>{ try{ const su=await ncm.song_url_v1({ id:q.query.id, level:'standard', cookie:ncmCookie }); const u=su.body&&su.body.data&&su.body.data[0]; let url=u&&u.url||''; if(url) url=url.replace(/^http:/,'https:'); r.json({ ok:true, url }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/recommend', async (_q,r)=>{ try{ const rc=await ncm.recommend_songs({ cookie:ncmCookie }); const songs=((rc.body&&rc.body.data&&rc.body.data.dailySongs)||[]).map(s=>({ ...ncmMapSong(s), reason:(s.reason||'每日推荐') })); r.json({ ok:true, songs }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });

@@ -66,6 +66,7 @@ function LSApp() {
   const [navVeil, setNavVeil] = aUseState(() => { const v = localStorage.getItem('ls-nav-veil'); return v == null ? 0.7 : Number(v); });
   const [navBlur, setNavBlur] = aUseState(() => { const v = localStorage.getItem('ls-nav-blur'); return v == null ? 14 : Number(v); });
   const [openPl, setOpenPl] = aUseState(null);
+  const [playlistSub, setPlaylistSub] = aUseState(null);
   const [roomOpen, setRoomOpen] = aUseState(false);
   const [roomTab, setRoomTab] = aUseState('chat');
   const [ncmSong, setNcmSong] = aUseState(null);
@@ -520,7 +521,7 @@ function LSApp() {
             onOpenComments={(s) => setCommentsSong(s)}
             onEnterRoom={() => setRoomOpen(true)} />
         )}
-        {view === 'playlist' && <LSPlaylistView onPlay={playSong} onOpenSong={(s) => setNcmDrawerSong(s)} openPl={openPl} setOpenPl={setOpenPl} wallOn={wallOn} setWallOn={setWallOn} wallVeil={wallVeil} setWallVeil={setWallVeil} wallBlur={wallBlur} setWallBlur={setWallBlur} cardVeil={cardVeil} setCardVeil={setCardVeil} cardBlur={cardBlur} setCardBlur={setCardBlur} navVeil={navVeil} setNavVeil={setNavVeil} navBlur={navBlur} setNavBlur={setNavBlur} skin={skin} setSkin={setSkin} customAc={customAc} setCustomAc={setCustomAc} customVars={customVars} setCustomVars={setCustomVars} darkMode={darkMode} setDarkMode={setDarkMode} />}
+        {view === 'playlist' && <LSPlaylistView onPlay={playSong} onOpenSong={(s) => setNcmDrawerSong(s)} openPl={openPl} setOpenPl={setOpenPl} sub={playlistSub} setSub={setPlaylistSub} wallOn={wallOn} setWallOn={setWallOn} wallVeil={wallVeil} setWallVeil={setWallVeil} wallBlur={wallBlur} setWallBlur={setWallBlur} cardVeil={cardVeil} setCardVeil={setCardVeil} cardBlur={cardBlur} setCardBlur={setCardBlur} navVeil={navVeil} setNavVeil={setNavVeil} navBlur={navBlur} setNavBlur={setNavBlur} skin={skin} setSkin={setSkin} customAc={customAc} setCustomAc={setCustomAc} customVars={customVars} setCustomVars={setCustomVars} darkMode={darkMode} setDarkMode={setDarkMode} />}
         {view === 'browse' && <LSBrowseView onPlay={playSong} onOpenSong={(s) => setNcmDrawerSong(s)} onOpenFM={() => setFmOpen(true)} />}
         {view === 'together' && (
           <div className="ls-together">
@@ -540,7 +541,7 @@ function LSApp() {
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></svg>
             <span className="lb">此刻</span>
           </button>
-          <button className={view === 'playlist' ? 'on' : ''} onClick={() => setView('playlist')}>
+          <button className={view === 'playlist' ? 'on' : ''} onClick={() => { setPlaylistSub(null); setView('playlist'); }}>
             <svg viewBox="0 0 24 24"><path d="M4 6h11M4 12h11M4 18h7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><circle cx="18" cy="16" r="3"/><path d="M21 16V7l-3 1" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
             <span className="lb">歌单</span>
           </button>
@@ -615,11 +616,14 @@ function LSApp() {
                 </button>
               ))}
             </div>
-            <div className="ls-wall-row">
-              <div className="ls-wall-prev"><image-slot id="ls-wallpaper" shape="rounded" radius="12" cap="3000" placeholder="拖图"></image-slot></div>
-              <div className="tx"><b>自定义背景</b><i>拖一张你们的照片当壁纸</i></div>
-              <button className={'ls-wall-tg' + (wallOn ? ' on' : '')} onClick={() => setWallOn(v => !v)}></button>
+            <div className="ls-wall-row" onClick={e => { const slot = e.currentTarget.querySelector('image-slot'); if (slot && e.target !== slot && !e.target.closest('button')) slot.click(); }}>
+              <div className="ls-wall-prev"><image-slot id="ls-wallpaper" shape="rounded" radius="12" cap="3000" tap-replace placeholder="点这里换背景"></image-slot></div>
+              <div className="tx"><b>自定义背景</b><i>点缩略图即可选择或更换</i></div>
+              <button aria-label={wallOn ? '关闭自定义背景' : '显示自定义背景'} aria-pressed={wallOn} className={'ls-wall-tg' + (wallOn ? ' on' : '')} onClick={() => setWallOn(v => !v)}></button>
             </div>
+            <button className="ls-deco-open" onClick={() => { setSkinOpen(false); setOpenPl(null); setPlaylistSub('deco'); setView('playlist'); }}>
+              <span><b>背景与透明度设置</b><i>打开完整装扮页面</i></span><em>›</em>
+            </button>
           </div>
         </div>
       )}
