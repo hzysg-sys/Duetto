@@ -49,6 +49,7 @@ function LSApp() {
   // A–F
   const [store] = aUseState(() => { const s = lsLoadStore(); window.__lsStore = s; return s; });
   const [, setTick] = aUseState(0);
+  const [, setIdentityRev] = aUseState(0);
   const bump = () => setTick(t => t + 1);
   const [drawerIdx, setDrawerIdx] = aUseState(null);
   const [ask, setAsk] = aUseState(null);
@@ -86,6 +87,34 @@ function LSApp() {
   aUseEffect(() => { localStorage.setItem('ls-nav-veil', navVeil); }, [navVeil]);
   aUseEffect(() => { localStorage.setItem('ls-nav-blur', navBlur); }, [navBlur]);
   aUseEffect(() => { localStorage.setItem('ls-playmode', playMode); }, [playMode]);
+
+  // 姓名和纪念日起点与主页的服务端配置保持同源；默认也明确为 Elias / 2026-06-03。
+  aUseEffect(() => {
+    fetch((window.__LS_API || '/api') + '/config').then(function (r) { return r.json(); }).then(function (d) {
+      const c = d && d.config; if (!c) return;
+      if (c.companion && c.companion.name) LS_PEOPLE.yu.name = String(c.companion.name);
+      if (c.user && c.user.display_name) LS_PEOPLE.eve.name = String(c.user.display_name);
+      if (c.room && c.room.relationship_start) lsBondSetRelationshipStart(String(c.room.relationship_start));
+      setIdentityRev(function (x) { return x + 1; });
+    }).catch(function () {});
+  }, []);
+
+  // 只统计音频真正 playing 的时间；暂停、缓冲、卡住都会立即停止累计。
+  aUseEffect(() => {
+    const start = function () { lsBondPlayback(true); };
+    const stop = function () { lsBondPlayback(false); };
+    const checkpoint = setInterval(function () { lsBondCheckpoint(); }, 10000);
+    ['playing'].forEach(function (n) { lsAudioEl.addEventListener(n, start); });
+    ['pause', 'ended', 'waiting', 'stalled'].forEach(function (n) { lsAudioEl.addEventListener(n, stop); });
+    window.addEventListener('pagehide', stop);
+    if (!lsAudioEl.paused && !lsAudioEl.ended) start();
+    return function () {
+      clearInterval(checkpoint); stop();
+      ['playing'].forEach(function (n) { lsAudioEl.removeEventListener(n, start); });
+      ['pause', 'ended', 'waiting', 'stalled'].forEach(function (n) { lsAudioEl.removeEventListener(n, stop); });
+      window.removeEventListener('pagehide', stop);
+    };
+  }, []);
 
   const cyclePlayMode = () => setPlayMode(m => m === 'loop' ? 'one' : m === 'one' ? 'shuffle' : 'loop');
   const libHas = (songId) => (window.__lsStore.library || []).some(x => x.songId === songId);
@@ -252,7 +281,7 @@ function LSApp() {
     try {
       const actor = window.__lsActor;
       const isAI = actor && actor.who === 'ai' && (Date.now() - actor.t) < 4000;
-      const who = isAI ? ((window.LS_PEOPLE && window.LS_PEOPLE.yu && window.LS_PEOPLE.yu.name) || 'AI') : ((window.LS_PEOPLE && window.LS_PEOPLE.eve && window.LS_PEOPLE.eve.name) || '我');
+      const who = isAI ? ((window.LS_PEOPLE && window.LS_PEOPLE.yu && window.LS_PEOPLE.yu.name) || 'Elias') : ((window.LS_PEOPLE && window.LS_PEOPLE.eve && window.LS_PEOPLE.eve.name) || '我');
       const d0 = new Date(); const tm = (d0.getHours() < 10 ? '0' : '') + d0.getHours() + ':' + (d0.getMinutes() < 10 ? '0' : '') + d0.getMinutes();
       const msg = { who: 'sys', t: who + ' ' + tail, time: tm, sys: true, ts: Date.now() };
       if (window.__lsRoomChatIn) window.__lsRoomChatIn(msg);
@@ -303,7 +332,7 @@ function LSApp() {
       } else if (act.type === 'like') {
         var qv = window.__lsEv && window.__lsEv.ncmQueue;
         var cs = (qv && qv.list && qv.list[qv.idx]) || null;
-        if (cs && cs.id && /^\d+$/.test(String(cs.id))) { fetch(base + '/ncm/like?id=' + cs.id + '&like=1', { method: 'POST' }).catch(function(){}); if (window.__lsRoomEvent && cs.title) window.__lsRoomEvent('红心了《' + cs.title + '》'); }
+        if (cs && cs.id) { lsBondSetLike('ai', cs, true); if (window.__lsRoomEvent && cs.title) window.__lsRoomEvent('红心了《' + cs.title + '》'); }
       } else if (act.type === 'queue') {
         if (act.query) {
           fetch(base + '/ncm/search?kw=' + encodeURIComponent(act.query))
@@ -598,7 +627,7 @@ function LSApp() {
             <div className="ls-room-wallbg" aria-hidden="true" style={{ display: 'none' }}><image-slot id="ls-room-bg" cap="3000" shape="rect" placeholder=""></image-slot></div>
             <div className="ls-room-head">
               <button className="ls-room-back" onClick={() => setRoomOpen(false)}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
-              <div className="ls-room-title">{(window.LS_PEOPLE && window.LS_PEOPLE.yu && window.LS_PEOPLE.yu.name) || 'AI'}</div>
+              <div className="ls-room-title">{(window.LS_PEOPLE && window.LS_PEOPLE.yu && window.LS_PEOPLE.yu.name) || 'Elias'}</div>
               <button className="ls-room-gear" onClick={() => { if (window.__lsOpenRoomSet) window.__lsOpenRoomSet(); }} aria-label="房间设置"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg></button>
             </div>
             <LSChatView tab={roomTab} setTab={setRoomTab} idx={idx} setIdx={setIdx} playing={playing} setPlaying={setPlaying} ncmSong={ncmSong} ncmQueue={ncmQueue} playNcmIdx={playNcmIdx} cyclePlayMode={cyclePlayMode} playMode={playMode} loved={loved} setLoved={setLoved} cur={cur} addToLib={addToLib} ncmLyric={ncmLyric} />

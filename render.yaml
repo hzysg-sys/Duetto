@@ -11,6 +11,8 @@ services:
         value: 24.18.0
       - key: DUETTO_AI_NAME
         value: Elias
+      - key: DUETTO_RELATIONSHIP_START
+        value: 2026-06-03
       - key: DUETTO_PIN
         sync: false
       - key: DUETTO_AUTH_SECRET

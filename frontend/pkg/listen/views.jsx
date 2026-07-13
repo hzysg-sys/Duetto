@@ -31,6 +31,7 @@ function LSPlayerView({ idx, setIdx, playing, setPlaying, cur, setCur, loved, se
   const rel = (d) => n ? ((idx + d) % n + n) % n : 0;
   const dur = (song && song.dur) || 0;
   const [pane, setPane] = vUseState(0);
+  const bondStats = lsUseBondStats();
   const drag = vUseRef({ x: 0, on: false, moved: 0 });
   const lyBox = vUseRef(null), lyOn = vUseRef(null), lyHold = vUseRef(0), lyAuto = vUseRef(false);
   const [selIdx, setSelIdx] = vUseState(null);
@@ -45,7 +46,9 @@ function LSPlayerView({ idx, setIdx, playing, setPlaying, cur, setCur, loved, se
     let alive = true;
     fetch(base + '/ncm/likelist').then(function (r) { return r.json(); }).then(function (d) {
       if (!alive || !d || !d.ids) return;
-      setLoved(d.ids.some(function (x) { return String(x) === String(song.id); }));
+      const isLoved = d.ids.some(function (x) { return String(x) === String(song.id); });
+      setLoved(isLoved);
+      if (d.logged !== false) lsBondSetLike('user', song, isLoved);
     }).catch(function () {});
     fetch(base + '/ncm/comments?id=' + song.id).then(function (r) { return r.json(); }).then(function (d) { if (alive && d) setCmtCount(d.total || 0); }).catch(function () {});
     return function () { alive = false; };
@@ -265,7 +268,7 @@ function LSPlayerView({ idx, setIdx, playing, setPlaying, cur, setCur, loved, se
           </svg>
           <div className="face eve"><image-slot id={LS_PEOPLE.eve.slot} shape="circle" always-ctl tap-replace placeholder=""></image-slot></div>
         </div>
-        <div className="dist">相距 <LSEdit eid="pf-dist" def={String(LS_STATS.distanceKm)}/> 公里，一起听了 <LSEdit eid="pf-hours" def={String(LS_STATS.togetherHours)}/> 小时 <LSEdit eid="pf-mins" def={String(LS_STATS.togetherMins)}/> 分钟</div>
+        <div className="dist">相距 <LSEdit eid="pf-dist" def={String(LS_STATS.distanceKm)}/> 公里，一起听了 {bondStats.togetherHours} 小时 {bondStats.togetherMins} 分钟</div>
       </div>
       )}
 
@@ -389,6 +392,7 @@ function LSPlayerView({ idx, setIdx, playing, setPlaying, cur, setCur, loved, se
       <div className="ls-engage">
         <button className={'eb' + (loved ? ' on' : '')} onClick={() => {
           const willLove = !loved; setLoved(l => !l);
+          lsBondSetLike('user', song, willLove);
           if (song && song.id && /^\d+$/.test(String(song.id))) { try { fetch(base + '/ncm/like?id=' + song.id + '&like=' + (willLove ? 1 : 0), { method: 'POST' }).catch(function () {}); } catch (e) {} }
           if (willLove && song && song.id) { try { window.__lsActor = { who: 'user', t: Date.now() }; if (window.__lsRoomEvent && song.title) window.__lsRoomEvent('红心了《' + song.title + '》'); const st = window.__lsStore; if (st && st.library && !st.library.some(x => x.songId === song.id)) { st.library.unshift({ songId: song.id, title: song.title, artist: song.artist, cover: song.cover, pinned: false, notes: 0, last: Date.now() }); if (window.lsSaveStore) window.lsSaveStore(st); } flash('已收藏 · ' + song.title); } catch (e) {} }
         }}>
@@ -720,6 +724,7 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
   const [comments, setComments] = vUseState(LS_COMMENTS.map(c => ({ ...c })));
   const [draft, setDraft] = vUseState('');
   const [chat, setChat] = vUseState(() => { try { const r = localStorage.getItem('ls-room-chat'); if (r) { const a = JSON.parse(r); if (a && a.length) return a.map(function (m) { return (m && m.time === '此刻') ? Object.assign({}, m, { time: '' }) : m; }); } } catch (e) {} return []; });
+  const bondStats = lsUseBondStats();
   vUseEffect(() => { try { localStorage.setItem('ls-room-chat', JSON.stringify(chat.filter(function (m) { return !m.pending; }).slice(-120))); } catch (e) {} }, [chat]);
   const [busy, setBusy] = vUseState(false);
   const [topStyle, setTopStyle] = vUseState(() => { try { return localStorage.getItem('ls-room-top') || 'baseline'; } catch (e) { return 'baseline'; } });
@@ -846,15 +851,8 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
   if (bub && bub.other) { bubVars['--lsr-bub-other'] = lsHexRgba(bub.other.c, bub.other.a); bubVars['--lsr-blur-other'] = (bub.other.b || 0) + 'px'; }
   if (bub && bub.self) { bubVars['--lsr-bub-self'] = lsHexRgba(bub.self.c, bub.self.a); bubVars['--lsr-blur-self'] = (bub.self.b || 0) + 'px'; }
 
-  // “一起听了”实时时长（起点存 localStorage）
-  const elapsed = (() => {
-    let start;
-    try { const raw = localStorage.getItem('ls-room-start'); if (raw && !isNaN(parseInt(raw, 10))) start = parseInt(raw, 10); else { start = Date.now(); localStorage.setItem('ls-room-start', String(start)); } } catch (e) { start = Date.now(); }
-    const mins = Math.max(0, Math.floor((Date.now() - start) / 60000));
-    if (mins < 60) return mins + ' 分钟';
-    const h = Math.floor(mins / 60), m = mins % 60;
-    return h + ' 小时' + (m ? ' ' + m + ' 分钟' : '');
-  })();
+  // “一起听了”来自音频真正播放的累计时长，不再按打开房间的时间冒充。
+  const elapsed = lsBondElapsedText(bondStats);
 
   // 一秒一跳：进度 / 时长 / 时长实时刷新
   vUseEffect(() => { const t = setInterval(() => forceTick(x => (x + 1) % 100000), 1000); return () => clearInterval(t); }, []);
@@ -971,6 +969,7 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
   const doLove = () => {
     const willLove = !lovedNow;
     if (setLoved) setLoved(willLove); else setLovedLocal(willLove);
+    lsBondSetLike('user', song, willLove);
     // 真实网易云歌：同步红心到「我喜欢的音乐」（取消也同步）
     window.__lsActor = { who: 'user', t: Date.now() };
     if (song && song.id && /^\d+$/.test(String(song.id))) { try { fetch((window.__LS_API || '/api') + '/ncm/like?id=' + song.id + '&like=' + (willLove ? 1 : 0), { method: 'POST' }).catch(function () {}); } catch (e) {} }
@@ -1021,7 +1020,7 @@ function LSChatView({ tab, setTab, idx, setIdx, playing, setPlaying, ncmSong, nc
   };
 
   const distKm = (function () { try { return localStorage.getItem('ls-edit-pf-dist') || LS_STATS.distanceKm; } catch (e) { return LS_STATS.distanceKm; } })();
-  const yuName = (window.LS_PEOPLE && window.LS_PEOPLE.yu.name) || 'AI';
+  const yuName = (window.LS_PEOPLE && window.LS_PEOPLE.yu.name) || 'Elias';
   const eveName = (window.LS_PEOPLE && window.LS_PEOPLE.eve.name) || 'You';
 
   const songById = (id) => LS_SONGS.find(s => s.id === id);
@@ -1269,6 +1268,7 @@ function LSDanmu({ idx }) {
 
 // ════════════ 小组件画廊 ════════════
 function LSGalleryView({ idx, playing, setPlaying, onFocus }) {
+  lsUseBondStats();
   const song = LS_SONGS[idx] || window.LS_EMPTY_SONG;
   const toggle = () => setPlaying(p => !p);
   return (
@@ -1298,6 +1298,7 @@ function LSGalleryView({ idx, playing, setPlaying, onFocus }) {
 }
 
 function LSFocusOverlay({ wid, idx, playing, setPlaying, onClose }) {
+  lsUseBondStats();
   const w = LS_WIDGETS.find(x => x.id === wid);
   if (!w) return null;
   const C = w.comp;
