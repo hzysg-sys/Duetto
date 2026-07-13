@@ -15,15 +15,17 @@ const settingsFile = path.join(dataDir, 'settings.json');
 const PORT = Number(process.env.PORT || 4183);
 const DEFAULT_ANALYSIS_BASE = process.env.DUETTO_ANALYSIS_BASE_URL || 'https://api.siliconflow.cn/v1';
 const DEFAULT_ANALYSIS_MODEL = process.env.DUETTO_ANALYSIS_MODEL || 'Qwen/Qwen3-Omni-30B-A3B-Instruct';
+const SHARED_COMPANION_BASE = String(process.env.MEOW_DIARY_API_URL || 'https://meow-diary-backend.onrender.com').replace(/\/+$/, '');
+const SHARED_COMPANION_TOKEN = String(process.env.MEOW_DIARY_API_TOKEN || '');
 const DEFAULTS = {
   user_name: process.env.DUETTO_USER_NAME || 'You',
   ai_name: process.env.DUETTO_AI_NAME || 'Elias',
   room_name: process.env.DUETTO_ROOM_NAME || 'Our Room',
   room_sub: '',
   ai: {
-    base_url: process.env.DUETTO_CHAT_BASE_URL || process.env.CHAT_API_BASE || '',
-    api_key: process.env.DUETTO_CHAT_API_KEY || process.env.CHAT_API_KEY || '',
-    model: process.env.DUETTO_CHAT_MODEL || process.env.CHAT_MODEL_NAME || '',
+    base_url: '',
+    api_key: '',
+    model: '',
     persona: '',
     a_base: DEFAULT_ANALYSIS_BASE,
     a_key: process.env.DUETTO_ANALYSIS_API_KEY || process.env.SILICONFLOW_API_KEY || '',
@@ -221,13 +223,13 @@ function logRoomNote(s, np, prompt, reply){
     const cv=normCover(np.cover||'');
     db.prepare("INSERT INTO songs(id,title,artist,cover,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, cover=CASE WHEN excluded.cover!='' AND COALESCE(songs.cover,'')='' THEN excluded.cover ELSE songs.cover END, updated_at=excluded.updated_at").run(sid, np.title||'', np.artist||'', cv, now, now);
     db.prepare('UPDATE songs SET notes_count=notes_count+1 WHERE id=?').run(sid);
-    if (s && s.ai && s.ai.api_key) maybeImpress(s, sid, np.title||'', np.artist||'');
+    if (withAnalysisAi(s).ai.api_key) maybeImpress(s, sid, np.title||'', np.artist||'');
   } catch(e){}
 }
 app.get('/api/prompt-preview',async(q,r)=>{ try{ const s0=getSettings(); const s={...s0, ai:{...s0.ai}}; if(String(q.query.mode||'')==='stream') s.ai.reply_mode='stream'; const np={ id:String(q.query.id||'25906124'), title:String(q.query.title||'晴天'), artist:String(q.query.artist||'周杰伦'), pos:100, dur:270, cur_lyric:String(q.query.lyric||'从前从前 有个人爱你很久') }; try { np.plays=countPlays(np.id); const a=readAnalysis(np.id); if(a)np.analysis=a.text; const im=readImpression(np.id); if(im)np.impression=im.text; const ns=readNotes(np.id, IMPRESSION_EVERY); if(ns.length)np.notes=ns; } catch(e){} r.type('text/plain').send(sysPrompt(s, 'music', np, q.query.ctx?String(q.query.ctx):'') + '\n\n────────\n（以上是 system 提示词。每次请求还会附带：房间最近 12 条对话，作为标准 user/assistant 消息历史跟在 system 之后——所以不显示在这里。）'); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 app.get('/api/song-analysis',(q,r)=>{ try{ const sid=String(q.query.id||''); const a=sid?readAnalysis(sid):null; const im=sid?readImpression(sid):null; r.json({ok:true, text:(a&&a.text)||'', impression:(im&&im.text)||'', impression_n:(im&&im.n)||0}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 app.get('/api/song-notes',async(q,r)=>{ try{ const sid=String(q.query.id||''); const limit=Math.min(200, Number(q.query.limit)||60); const sql=`SELECT n.song_id, COALESCE(NULLIF(n.title,''),s.title,'') AS title, COALESCE(NULLIF(n.artist,''),s.artist,'') AS artist, COALESCE(s.cover,'') AS cover, n.passage,n.thought,n.reply,n.ts FROM song_notes n LEFT JOIN songs s ON s.id=n.song_id`; const rows = sid ? db.prepare(sql+' WHERE n.song_id=? ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(sid, limit) : db.prepare(sql+' ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(limit); await fillCovers(rows.map(x=>({id:x.song_id, cover:x.cover}))); const cache=loadCoverCache(); for(const x of rows){ if(!x.cover && x.song_id && cache[x.song_id]) x.cover=cache[x.song_id]; } r.json({ok:true, notes:rows}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-app.post('/api/song-note',(q,r)=>{ try{ const b=q.body||{}; const sid=String(b.id||''); if(!sid) return r.json({ok:false}); const s0=getSettings(); const s2={...s0, ai:mergeAi(s0.ai, b.ai)}; const now=Date.now(); db.prepare('INSERT INTO song_notes(song_id,title,artist,passage,thought,reply,ts) VALUES(?,?,?,?,?,?,?)').run(sid, String(b.title||''), String(b.artist||''), String(b.passage||''), String(b.thought||''), String(b.reply||''), now); try{ const cv=normCover(b.cover||''); db.prepare("INSERT INTO songs(id,title,artist,cover,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, cover=CASE WHEN excluded.cover!='' AND COALESCE(songs.cover,'')='' THEN excluded.cover ELSE songs.cover END, updated_at=excluded.updated_at").run(sid, String(b.title||''), String(b.artist||''), cv, now, now); db.prepare('UPDATE songs SET notes_count=notes_count+1 WHERE id=?').run(sid); }catch(e){} if(s2.ai.api_key) maybeImpress(s2, sid, b.title, b.artist); r.json({ok:true}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+app.post('/api/song-note',(q,r)=>{ try{ const b=q.body||{}; const sid=String(b.id||''); if(!sid) return r.json({ok:false}); const s0=getSettings(); const s2={...s0, ai:mergeAi(s0.ai, b.ai)}; const now=Date.now(); db.prepare('INSERT INTO song_notes(song_id,title,artist,passage,thought,reply,ts) VALUES(?,?,?,?,?,?,?)').run(sid, String(b.title||''), String(b.artist||''), String(b.passage||''), String(b.thought||''), String(b.reply||''), now); try{ const cv=normCover(b.cover||''); db.prepare("INSERT INTO songs(id,title,artist,cover,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, cover=CASE WHEN excluded.cover!='' AND COALESCE(songs.cover,'')='' THEN excluded.cover ELSE songs.cover END, updated_at=excluded.updated_at").run(sid, String(b.title||''), String(b.artist||''), cv, now, now); db.prepare('UPDATE songs SET notes_count=notes_count+1 WHERE id=?').run(sid); }catch(e){} if(withAnalysisAi(s2).ai.api_key) maybeImpress(s2, sid, b.title, b.artist); r.json({ok:true}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 function fmtSec(x){ x=Math.max(0,Math.floor(Number(x)||0)); return Math.floor(x/60)+':'+String(x%60).padStart(2,'0'); }
 // 组装"正在播"的完整上下文：进度 / 播放次数 / 歌曲分析 / 印象（或在场记录）
 async function enrichNp(s, np){
@@ -347,11 +349,22 @@ function apiEndpoint(base, endpoint){
 }
 async function fetchT(url,opts,ms){ const ac=new AbortController(); const t=setTimeout(function(){ ac.abort(); },ms||30000); try{ return await fetch(url,{...opts,signal:ac.signal}); } finally { clearTimeout(t); } }
 async function callLLM(s,messages,over){ const base=String(s.ai.base_url||'').replace(/\/+$/,''); if(!s.ai.api_key)throw Object.assign(new Error('AI not configured'),{status:503}); const rr=await fetchT(apiEndpoint(base,'chat/completions'),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.ai.api_key},body:JSON.stringify({model:(over&&over.model)||s.ai.model,temperature:0.9,max_tokens:1024,messages})},(over&&over.timeout)||45000); if(!rr.ok){const t=await rr.text().catch(()=>'');throw Object.assign(new Error('LLM '+rr.status+': '+t.slice(0,200)),{status:502});} const d=await rr.json(); return (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(); }
-app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ if(bb.ai&&bb.ai.quote) np.quote=String(bb.ai.quote).slice(0,120); await enrichNp(s,np); } const ctx=await fetchContext(s, prompt, np); const raw=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np,ctx)},...past,{role:'user',content:String(prompt)}]); let reply, think=''; if(s.ai.reply_mode==='stream'){ const st=stripThinking(raw); reply=st.text; think=st.think; } else { reply=deStar(parseReplies(raw)).join('\n'); } if(!(bb.ai&&bb.ai.no_note)) logRoomNote(s, np, prompt, reply); r.json({ok:true,reply,think}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
+async function callSharedCompanion(body){
+  if(!SHARED_COMPANION_TOKEN) throw Object.assign(new Error('Shared companion token is not configured'),{status:503});
+  const rr=await fetchT(SHARED_COMPANION_BASE+'/api/music/chat',{
+    method:'POST',
+    headers:{'Content-Type':'application/json',Authorization:'Bearer '+SHARED_COMPANION_TOKEN},
+    body:JSON.stringify(body),
+  },120000);
+  const d=await rr.json().catch(()=>null);
+  if(!rr.ok||!d||!d.ok) throw Object.assign(new Error((d&&d.error)||('Shared companion '+rr.status)),{status:rr.status>=400&&rr.status<600?rr.status:502});
+  return d;
+}
+app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; const {prompt='',history=[],nowPlaying=null,client_time=''}=bb; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ const quote=bb.quote||(bb.ai&&bb.ai.quote); if(quote) np.quote=String(quote).slice(0,120); await enrichNp(s,np); } const d=await callSharedCompanion({prompt:String(prompt),history:past,now_playing:np,client_time:String(client_time||''),quote:String(bb.quote||(bb.ai&&bb.ai.quote)||'')}); const reply=String(d.reply||''); if(!(bb.ai&&bb.ai.no_note)) logRoomNote(s,np,prompt,reply); r.json({ok:true,reply,think:String(d.think||'')}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— Song analysis: cached per song id so each song is analyzed once ——
 function readAnalysis(sid){ try { return db.prepare("SELECT id,title,artist,text,ts FROM song_analysis WHERE id=? AND text!=''").get(String(sid)) || null; } catch(e){ return null; } }
 function appendAnalysis(e){ try { db.prepare('INSERT OR REPLACE INTO song_analysis(id,title,artist,text,ts) VALUES(?,?,?,?,?)').run(String(e.id||''), e.title||'', e.artist||'', e.text||'', e.ts||Date.now()); } catch(err){} }
-app.post('/api/song-analysis',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s=(bb.ai&&bb.ai.api_key)?{...s0,ai:mergeAi(s0.ai,bb.ai)}:{...s0,ai:mergeAi(s0.ai,{ai_name:bb.ai&&bb.ai.ai_name,user_name:bb.ai&&bb.ai.user_name,persona:bb.ai&&bb.ai.persona,time_aware:bb.ai&&bb.ai.time_aware})}; if(!s.ai.api_key)return r.json({ok:true,text:''}); const {title='',artist=''}=bb; const sid=String(bb.id||''); if(sid){ const hit=readAnalysis(sid); if(hit) return r.json({ok:true,text:hit.text,cached:true}); } const lrc=String(bb.lrc||'').slice(0,6000); const lyrArr=Array.isArray(bb.lyrics)?bb.lyrics.map(l=>typeof l==='string'?l:(l&&(l.line||l.text))||'').filter(Boolean).join('\n'):''; const lyr=lrc||lyrArr; const text=parseReplies(await callLLM(s,[{role:'system',content:sysPrompt(s,'music',{title,artist})+'\n\n她刚放了这首歌，你认真听完了。写1-3句听后感，像随口说给她听的，温柔具体有质感；可以引用扎到你的那句歌词。歌词每行行首的[分:秒]是时间轴，只用来感受歌的推进，回复里不要出现时间戳。直接出正文，不要分点、不要标签、不要 JSON 数组。'},{role:'user',content:'歌：'+title+(artist?(' — '+artist):'')+(lyr?('\n完整歌词：\n'+lyr):'')}])).join('\n'); if(sid&&text) appendAnalysis({id:sid,title,artist,text,ts:Date.now()}); r.json({ok:true,text}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
+app.post('/api/song-analysis',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0,ai:mergeAi(s0.ai,bb.ai)}; const analysisAi=withAnalysisAi(s); if(!analysisAi.ai.api_key)return r.json({ok:true,text:''}); const {title='',artist=''}=bb; const sid=String(bb.id||''); if(sid){ const hit=readAnalysis(sid); if(hit) return r.json({ok:true,text:hit.text,cached:true}); } const lrc=String(bb.lrc||'').slice(0,6000); const lyrArr=Array.isArray(bb.lyrics)?bb.lyrics.map(l=>typeof l==='string'?l:(l&&(l.line||l.text))||'').filter(Boolean).join('\n'):''; const lyr=lrc||lyrArr; const text=parseReplies(await callLLM(analysisAi,[{role:'system',content:sysPrompt(s,'music',{title,artist})+'\n\n她刚放了这首歌，你认真听完了。写1-3句听后感，像随口说给她听的，温柔具体有质感；可以引用扎到你的那句歌词。歌词每行行首的[分:秒]是时间轴，只用来感受歌的推进，回复里不要出现时间戳。直接出正文，不要分点、不要标签、不要 JSON 数组。'},{role:'user',content:'歌：'+title+(artist?(' — '+artist):'')+(lyr?('\n完整歌词：\n'+lyr):'')}])).join('\n'); if(sid&&text) appendAnalysis({id:sid,title,artist,text,ts:Date.now()}); r.json({ok:true,text}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— NetEase Cloud Music: real QR login ——
 const ncmCookieFile = path.join(dataDir, 'ncm-cookie.txt');
 let ncmCookie = '';
@@ -444,15 +457,14 @@ wss.on('connection', (sock, req) => {
       try {
         const s0 = getSettings();
         const ai = m.ai ? mergeAi(s0.ai, m.ai) : s0.ai;
-        if (!ai.api_key) { sock.send(JSON.stringify({ t:'ai', id:m.id, reply:'[AI not set up: add your endpoint + key in Settings or the Model tab]' })); return; }
         const eff = { ...s0, ai };
         const np = m.nowPlaying || (m.ai && m.ai.nowPlaying) || null;
         const hist = m.history || (m.ai && m.ai.history) || [];
         const past = Array.isArray(hist) ? hist.slice(-12).filter(x=>x&&x.role&&typeof x.content==='string') : [];
         if (np) { if (m.ai && m.ai.quote) np.quote = String(m.ai.quote).slice(0,120); await enrichNp(eff, np); }
-        const ctx2 = await fetchContext(eff, m.prompt, np);
-        const raw2 = await callLLM(eff, [{ role:'system', content: sysPrompt(eff, 'music', np, ctx2) }, ...past, { role:'user', content: String(m.prompt||'') }]);
-        let reply, think2=''; if (eff.ai.reply_mode==='stream') { const st=stripThinking(raw2); reply=st.text; think2=st.think; } else { reply=deStar(parseReplies(raw2)).join('\n'); }
+        const shared = await callSharedCompanion({prompt:String(m.prompt||''),history:past,now_playing:np,client_time:String(m.client_time||''),quote:String((m.ai&&m.ai.quote)||'')});
+        const reply = String(shared.reply||'');
+        const think2 = String(shared.think||'');
         if (!(m.ai && m.ai.no_note)) logRoomNote(eff, np, m.prompt, reply);
         sock.send(JSON.stringify({ t:'ai', id:m.id, reply, think: think2 }));
       } catch(e) { sock.send(JSON.stringify({ t:'ai', id:m.id, reply:'[AI error: '+e.message+']' })); }

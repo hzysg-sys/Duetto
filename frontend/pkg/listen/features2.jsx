@@ -148,49 +148,38 @@ Object.assign(window, { LSFMView, LSAskBar, LSModelInline });
 // ════════ E（内嵌版）· 一起听 tab 里的模型设置 ════════
 function LSModelInline({ bump }) {
   const m0 = window.__lsStore.model || {};
-  const c0 = m0.chat || {};
   const a0 = m0.analysis || {};
-  const [cName, setCName] = f2UseState(c0.name || '');
-  const [cEndpoint, setCEndpoint] = f2UseState(c0.endpoint || '');
-  const [cKey, setCKey] = f2UseState(c0.key || '');
-  const [cShow, setCShow] = f2UseState(false);
   const [aName, setAName] = f2UseState(a0.name || '');
   const [aEndpoint, setAEndpoint] = f2UseState(a0.endpoint || '');
   const [aKey, setAKey] = f2UseState(a0.key || '');
   const [aShow, setAShow] = f2UseState(false);
-  const [persona, setPersona] = f2UseState(window.__lsStore.persona || '');
-  const [styleTxt, setStyleTxt] = f2UseState(window.__lsStore.style || '');
-  const [userNick, setUserNick] = f2UseState((function(){try{return localStorage.getItem('ls-nick-user')||'';}catch(e){return '';}})());
-  const [aiNick, setAiNick] = f2UseState((function(){try{return localStorage.getItem('ls-nick-ai')||'';}catch(e){return '';}})());
   const [state, setState] = f2UseState('idle');
-  // 拉取模型列表：POST /api/models {base_url, api_key} → 点选填入模型名
-  const [mList, setMList] = f2UseState(null);   // {which:'chat'|'analysis', list:[...]}
-  const [mBusy, setMBusy] = f2UseState('');
-  const [mErr, setMErr] = f2UseState(null);     // {which, msg}
-  const pullModels = (which) => {
-    const ep = which === 'chat' ? cEndpoint : aEndpoint;
-    const key = which === 'chat' ? cKey : aKey;
-    if (!ep) { setMErr({ which: which, msg: '先填中转地址' }); return; }
-    setMBusy(which); setMErr(null); setMList(null);
+  // 拉取分析模型列表：POST /api/models {base_url, api_key} → 点选填入模型名
+  const [mList, setMList] = f2UseState(null);
+  const [mBusy, setMBusy] = f2UseState(false);
+  const [mErr, setMErr] = f2UseState('');
+  const pullModels = () => {
+    if (!aEndpoint) { setMErr('先填中转地址'); return; }
+    setMBusy(true); setMErr(''); setMList(null);
     const API = (typeof window !== 'undefined' && window.__LS_API) || '/api';
-    fetch(API + '/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base_url: ep, api_key: key }) })
+    fetch(API + '/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base_url: aEndpoint, api_key: aKey }) })
       .then(r => r.json())
       .then(d => {
-        if (d && d.ok && d.models && d.models.length) setMList({ which: which, list: d.models });
-        else setMErr({ which: which, msg: (d && d.error) || '拉取失败：列表为空' });
-        setMBusy('');
+        if (d && d.ok && d.models && d.models.length) setMList(d.models);
+        else setMErr((d && d.error) || '拉取失败：列表为空');
+        setMBusy(false);
       })
-      .catch(e => { setMErr({ which: which, msg: '拉取失败：' + ((e && e.message) || e) }); setMBusy(''); });
+      .catch(e => { setMErr('拉取失败：' + ((e && e.message) || e)); setMBusy(false); });
   };
-  const pullRow = (which, setName) => (
+  const pullRow = () => (
     <>
       <div className="ls-fld ls-pullrow">
-        <button className="ls-pullbtn" disabled={mBusy === which} onClick={() => pullModels(which)}>{mBusy === which ? '拉取中…' : '拉取模型列表'}</button>
-        {mErr && mErr.which === which ? <span className="perr">{mErr.msg}</span> : null}
+        <button className="ls-pullbtn" disabled={mBusy} onClick={pullModels}>{mBusy ? '拉取中…' : '拉取模型列表'}</button>
+        {mErr ? <span className="perr">{mErr}</span> : null}
       </div>
-      {mList && mList.which === which && (
+      {mList && (
         <div className="ls-mlist">
-          {mList.list.map(id => <button key={id} onClick={() => { setName(id); setMList(null); }}>{id}</button>)}
+          {mList.map(id => <button key={id} onClick={() => { setAName(id); setMList(null); }}>{id}</button>)}
         </div>
       )}
     </>
@@ -200,13 +189,7 @@ function LSModelInline({ bump }) {
     setTimeout(() => {
       try {
         const s = window.__lsStore;
-        s.model = {
-          chat: { name: cName, endpoint: cEndpoint, key: cKey },
-          analysis: { name: aName, endpoint: aEndpoint, key: aKey }
-        };
-        s.persona = persona;
-        s.style = styleTxt;
-        try { localStorage.setItem('ls-nick-user', userNick); localStorage.setItem('ls-nick-ai', aiNick); if (window.LS_PEOPLE) { window.LS_PEOPLE.eve.name = userNick || 'You'; window.LS_PEOPLE.yu.name = aiNick || 'AI'; } } catch (e) {}
+        s.model = { analysis: { name: aName, endpoint: aEndpoint, key: aKey } };
         lsSaveStore(s); setState('ok'); bump && bump(); setTimeout(() => setState('idle'), 1600);
       } catch (e) { setState('err'); }
     }, 700);
@@ -220,32 +203,10 @@ function LSModelInline({ bump }) {
   );
   return (
     <div className="ls-modelinline">
-      <div className="ls-arc-head"><div className="ls-arc-h">模型设置<span>一起听陪聊回复 · 分析歌曲 双模型</span></div></div>
+      <div className="ls-arc-head"><div className="ls-arc-h">歌曲分析设置<span>陪聊由主页里的同一个小克统一接管</span></div></div>
 
       <div className="ls-model-group">
-        <div className="ls-model-gh">昵称设置（替换档案/房间里的名字）</div>
-        <div className="ls-fld"><label>你的昵称</label>
-          <input value={userNick} onChange={e => setUserNick(e.target.value)} placeholder="You" /></div>
-        <div className="ls-fld"><label>AI 昵称</label>
-          <input value={aiNick} onChange={e => setAiNick(e.target.value)} placeholder="AI" /></div>
-      </div>
-
-      <div className="ls-model-group">
-        <div className="ls-model-gh">一起听陪聊回复模型</div>
-        <div className="ls-fld"><label>回应模型</label>
-          <input value={cName} onChange={e => setCName(e.target.value)} placeholder="claude-3-5-sonnet" /></div>
-        <div className="ls-fld"><label>中转地址</label>
-          <input value={cEndpoint} onChange={e => setCEndpoint(e.target.value)} placeholder="https://api.anthropic.com" /></div>
-        <div className="ls-fld"><label>回应 Key</label>
-          <div className="ls-keyrow">
-            <input type={cShow ? 'text' : 'password'} value={cKey} onChange={e => setCKey(e.target.value)} placeholder="sk-…" />
-            {eye(cShow, () => setCShow(s => !s))}
-          </div></div>
-        {pullRow('chat', setCName)}
-      </div>
-
-      <div className="ls-model-group">
-        <div className="ls-model-gh">分析歌曲模型（已预设低成本听歌模型）</div>
+        <div className="ls-model-gh">分析歌曲模型</div>
         <div className="ls-fld"><label>回应模型</label>
           <input value={aName} onChange={e => setAName(e.target.value)} placeholder="Qwen/Qwen3-Omni-30B-A3B-Instruct" /></div>
         <div className="ls-fld"><label>中转地址</label>
@@ -255,25 +216,13 @@ function LSModelInline({ bump }) {
             <input type={aShow ? 'text' : 'password'} value={aKey} onChange={e => setAKey(e.target.value)} placeholder="sk-…" />
             {eye(aShow, () => setAShow(s => !s))}
           </div></div>
-        {pullRow('analysis', setAName)}
-      </div>
-
-      <div className="ls-model-group">
-        <div className="ls-model-gh">AI 人设 / 提示词</div>
-        <div className="ls-fld"><label>AI 人设 / 提示词</label>
-          <textarea className="ls-persona-ta" rows={5} value={persona} onChange={e => setPersona(e.target.value)}
-            style={{ width: '100%', boxSizing: 'border-box', display: 'block', margin: 0, padding: '10px 14px', borderRadius: '12px', border: '1px solid var(--ls-line)', background: 'color-mix(in srgb, var(--ls-panel) 15%, #fff)', color: 'var(--ls-ink)', fontSize: '14px', fontFamily: 'var(--ls-meta)', lineHeight: '1.5', resize: 'vertical', minHeight: '96px' }}
-            placeholder="你是一个温柔的音乐伙伴，会根据心情推荐歌。想放歌时可以直接点歌。" /></div>
-        <div className="ls-fld"><label>对话风格</label>
-          <textarea rows={3} value={styleTxt} onChange={e => setStyleTxt(e.target.value)}
-            style={{ width: '100%', boxSizing: 'border-box', display: 'block', margin: 0, padding: '10px 14px', borderRadius: '12px', border: '1px solid var(--ls-line)', background: 'color-mix(in srgb, var(--ls-panel) 15%, #fff)', color: 'var(--ls-ink)', fontSize: '14px', fontFamily: 'var(--ls-meta)', lineHeight: '1.5', resize: 'vertical', minHeight: '64px' }}
-            placeholder="TA 说话的方式：比如 回复简短像聊微信、多用语气词、别用书面腔。留空用默认。" /></div>
+        {pullRow()}
       </div>
 
       <button className={'ls-save ' + state} onClick={save} disabled={state === 'saving'}>
         {state === 'idle' && '保存'}{state === 'saving' && '保存中…'}{state === 'ok' && '已保存 ✓'}{state === 'err' && '保存失败，重试'}
       </button>
-      <div className="ls-model-note">Key 只存在本地浏览器；陪聊模型用于一起听时 AI 回复，分析模型用于真听一遍歌。</div>
+      <div className="ls-model-note">这里的 Key 只用于让通义听歌；陪聊模型、人设和记忆全部跟主页聊天窗共用。</div>
     </div>
   );
 }

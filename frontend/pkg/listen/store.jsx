@@ -24,7 +24,7 @@ function lsSeedStore() {
     archive: [],
     library: [],
     fm: [],
-    model: { chat: { name: '', endpoint: '', key: '' }, analysis: { ...LS_ANALYSIS_PRESET } },
+    model: { analysis: { ...LS_ANALYSIS_PRESET } },
     analysisPreset: 'siliconflow-v1',
   };
 }
@@ -39,8 +39,6 @@ function lsLoadStore() {
   s.library = s.library.filter(function (x) { return x && !demoSongIds[String(x.songId || '')]; });
   s.fm = s.fm.filter(function (x) { return x && !/^f[1-4]$/.test(String(x.id || '')) && !demoSongIds[String(x.id || '')]; });
   s.model = s.model || {};
-  if (s.style === undefined) s.style = '';
-  if (!s.model.chat) s.model.chat = (s.model.name !== undefined && s.model.name !== null && s.model.chat === undefined && !s.model.analysis) ? { name: s.model.name || '', endpoint: s.model.endpoint || '', key: s.model.key || '' } : (s.model.chat || { name: '', endpoint: '', key: '' });
   if (!s.model.analysis) s.model.analysis = { name: '', endpoint: '', key: '' };
   if (s.analysisPreset !== 'siliconflow-v1') {
     if (!s.model.analysis.name && !s.model.analysis.endpoint && !s.model.analysis.key) {
@@ -49,6 +47,12 @@ function lsLoadStore() {
     s.analysisPreset = 'siliconflow-v1';
   }
   if (s.model.analysis.name === 'google/gemini-2.5-flash' && !s.model.analysis.endpoint) s.model.analysis.name = '';
+  // 陪聊模型、人设和昵称统一由主页后端管理；迁移时清掉浏览器里旧的重复配置和 Key。
+  s.model = { analysis: s.model.analysis };
+  delete s.persona;
+  delete s.style;
+  try { localStorage.removeItem('ls-nick-user'); localStorage.removeItem('ls-nick-ai'); } catch (e) {}
+  lsSaveStore(s);
   window.__lsStore = s;
   return s;
 }
