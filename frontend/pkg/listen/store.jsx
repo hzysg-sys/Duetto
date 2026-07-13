@@ -102,6 +102,19 @@ let __ncmInflightRecommend = null;
 
 function __ncmBase() { return window.__LS_API || '/api'; }
 
+function __ncmFetchJson(path, timeoutMs) {
+  var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  var timer = ctl ? setTimeout(function () { ctl.abort(); }, timeoutMs || 20000) : null;
+  return fetch(__ncmBase() + path, ctl ? { signal: ctl.signal } : undefined)
+    .then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) {
+        if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('请求失败（' + r.status + '）'));
+        return j;
+      });
+    })
+    .finally(function () { if (timer) clearTimeout(timer); });
+}
+
 function __ncmStatus() {
   if (window.__ncmCache.status !== null) return Promise.resolve(window.__ncmCache.status);
   if (__ncmInflightStatus) return __ncmInflightStatus;
@@ -112,13 +125,13 @@ function __ncmStatus() {
   return __ncmInflightStatus;
 }
 
-function __ncmPlaylists() {
-  if (window.__ncmCache.playlists !== null) return Promise.resolve(window.__ncmCache.playlists);
+function __ncmPlaylists(options) {
+  var force = options && options.force;
+  if (!force && window.__ncmCache.playlists !== null) return Promise.resolve(window.__ncmCache.playlists);
   if (__ncmInflightPlaylists) return __ncmInflightPlaylists;
-  __ncmInflightPlaylists = fetch(__ncmBase() + '/ncm/playlists')
-    .then(function (r) { return r.json(); })
-    .then(function (j) { var v = (j && j.playlists) || []; window.__ncmCache.playlists = v; __ncmInflightPlaylists = null; return v; })
-    .catch(function (e) { __ncmInflightPlaylists = null; throw e; });
+  __ncmInflightPlaylists = __ncmFetchJson('/ncm/playlists', 20000)
+    .then(function (j) { var v = Array.isArray(j.playlists) ? j.playlists : []; window.__ncmCache.playlists = v; return v; })
+    .finally(function () { __ncmInflightPlaylists = null; });
   return __ncmInflightPlaylists;
 }
 

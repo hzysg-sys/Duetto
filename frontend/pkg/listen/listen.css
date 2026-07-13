@@ -838,13 +838,19 @@ input, textarea { font: inherit; color: inherit; }
 .ls-wall-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--ls-line-soft); }
 .ls-wall-prev { width: 46px; height: 46px; border-radius: 12px; overflow: hidden; flex-shrink: 0; box-shadow: inset 0 0 0 1px var(--ls-line); }
 .ls-wall-prev image-slot { width: 100%; height: 100%; display: block; }
-.ls-wall-row .tx { flex: 1; }
+.ls-wall-row .tx { flex: 1; cursor: pointer; }
 .ls-wall-row .tx b { font-family: var(--ls-serif-d); font-style: italic; font-size: 17px; font-weight: 600; display: block; }
 .ls-wall-row .tx i { font-family: var(--ls-meta); font-style: normal; font-size: 10px; color: var(--ls-ink-faint); }
 .ls-wall-tg { width: 46px; height: 27px; border-radius: 14px; background: var(--ls-line); position: relative; flex-shrink: 0; transition: background .2s; }
 .ls-wall-tg::after { content: ''; position: absolute; top: 3px; left: 3px; width: 21px; height: 21px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); transition: transform .2s; }
 .ls-wall-tg.on { background: var(--ls-gold); }
 .ls-wall-tg.on::after { transform: translateX(19px); }
+.ls-deco-open { width: 100%; margin-top: 14px; padding: 12px 13px; border: 1px solid var(--ls-line-soft); border-radius: 13px; display: flex; align-items: center; justify-content: space-between; color: var(--ls-ink); background: color-mix(in srgb, var(--ls-panel) 76%, transparent); text-align: left; cursor: pointer; }
+.ls-deco-open span { display: flex; flex-direction: column; gap: 3px; }
+.ls-deco-open b { font-family: var(--ls-cn); font-size: 13px; font-weight: 600; }
+.ls-deco-open i { font-family: var(--ls-meta); font-size: 10px; font-style: normal; color: var(--ls-ink-faint); }
+.ls-deco-open em { font-family: var(--ls-serif-d); font-size: 23px; font-style: normal; color: var(--ls-gold); line-height: 1; }
+.ls-deco-open:active { background: color-mix(in srgb, var(--ls-gold) 10%, var(--ls-panel)); }
 
 /* ════════ 可编辑文字 ════════ */
 .ls-edit { outline: none; border-radius: 6px; transition: background .15s; cursor: text; }
@@ -905,6 +911,8 @@ input, textarea { font: inherit; color: inherit; }
 .ls-pf-tabs button { flex: 1; padding: 9px 0; border-radius: 11px; border: 1px solid rgba(140,120,90,.2); background: transparent; font-family: var(--ls-cn); font-size: 13px; color: var(--ls-ink); cursor: pointer; transition: background .2s, border-color .2s; }
 .ls-pf-tabs button:active { background: rgba(140,120,90,.1); }
 .ls-subback { cursor: pointer; }
+.ls-pl-retry { margin-top: 11px; padding: 7px 15px; border: 1px solid var(--ls-line); border-radius: 999px; color: var(--ls-ink); background: var(--ls-panel); font-family: var(--ls-cn); font-size: 12px; cursor: pointer; }
+.ls-pl-retry-inline { display: block; margin: 0 0 10px; color: var(--ls-gold); }
 
 /* deco sliders -> real visual: background veil + blur, card blur (driven by app CSS vars) */
 .has-wall .ls-wall::after { content: ''; position: absolute; inset: 0; background: var(--ls-bg); opacity: var(--ls-wall-veil, .4); pointer-events: none; }

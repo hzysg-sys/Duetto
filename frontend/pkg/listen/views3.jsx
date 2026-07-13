@@ -1,7 +1,7 @@
 /* listen/views3.jsx — 曲库（搜索 + 日推 + 私人FM）· 歌单（资料/歌单风，照参考图3）。
    依赖 data.jsx、widgets.jsx（LSIcon / LSCover）、features2.jsx（LSFMView）、store.jsx（__ncm* 缓存层）。 */
 
-const { useState: v3UseState, useEffect: v3UseEffect } = React;
+const { useState: v3UseState, useEffect: v3UseEffect, useCallback: v3UseCallback } = React;
 const lsById = (id) => LS_SONGS.find(s => s.id === id);
 
 // ════════════ 曲库 ════════════
@@ -163,7 +163,9 @@ function LSPlaylistView(props) {
   const setOpenPl = props.setOpenPl || setOpenPlLocal;
 
   // R8 子页标签：null(主页) | recent | local | rank | deco
-  const [sub, setSub] = v3UseState(null);
+  const [subLocal, setSubLocal] = v3UseState(null);
+  const sub = props.sub !== undefined ? props.sub : subLocal;
+  const setSub = props.setSub || setSubLocal;
 
   // R4 登录态：初值优先缓存 status，其次 localStorage
   const [ncmUser, setNcmUser] = v3UseState(() => {
@@ -188,13 +190,24 @@ function LSPlaylistView(props) {
 
   // 真实网易云歌单（null=未加载） + 展开歌单曲目
   const [ncmPlaylists, setNcmPlaylists] = v3UseState(() => (window.__ncmCache ? window.__ncmCache.playlists : null));
+  const [ncmPlaylistError, setNcmPlaylistError] = v3UseState('');
   const [openTracks, setOpenTracks] = v3UseState([]);
+  const loadNcmPlaylists = v3UseCallback((force) => {
+    if (!window.__ncmPlaylists) {
+      setNcmPlaylistError('当前版本暂时无法读取歌单');
+      return;
+    }
+    setNcmPlaylistError('');
+    window.__ncmPlaylists({ force: !!force })
+      .then(pls => setNcmPlaylists(Array.isArray(pls) ? pls : []))
+      .catch(() => setNcmPlaylistError('歌单加载失败，请检查网络后重试'));
+  }, []);
   v3UseEffect(() => {
-    if (!ncmUser) { setNcmPlaylists(null); return; }
+    if (!ncmUser) { setNcmPlaylists(null); setNcmPlaylistError(''); return; }
     const pc = window.__ncmCache && window.__ncmCache.playlists;
-    if (pc != null) { setNcmPlaylists(pc); return; }
-    if (window.__ncmPlaylists) window.__ncmPlaylists().then(pls => { if (pls) setNcmPlaylists(pls); }).catch(() => {});
-  }, [ncmUser]);
+    if (pc != null) setNcmPlaylists(pc);
+    loadNcmPlaylists(pc != null);
+  }, [ncmUser, loadNcmPlaylists]);
   const playNcm = (song, list, i) => { if (window.__lsPlayNcm) window.__lsPlayNcm(song, list, i); };
   const openNcmPl = (pl) => {
     setOpenPl({ id: pl.id, name: pl.name, ncm: true });
@@ -501,10 +514,14 @@ function LSPlaylistView(props) {
       <div className="ls-pf-section">
         {ncmUser ? (
           ncmPlaylists === null ? (
-            <div className="ls-empty"><div className="e-t">加载中…</div></div>
+            <div className="ls-empty">
+              <div className="e-t">{ncmPlaylistError || '加载中…'}</div>
+              {ncmPlaylistError && <button className="ls-pl-retry" onClick={() => loadNcmPlaylists(true)}>重新加载</button>}
+            </div>
           ) : (
             <>
               <div className="ls-sec-h">歌单 {ncmPlaylists.length}</div>
+              {ncmPlaylistError && <button className="ls-pl-retry ls-pl-retry-inline" onClick={() => loadNcmPlaylists(true)}>刷新失败，点此重试</button>}
               {ncmPlaylists.map(pl => (
                 <div className="ls-pl-row" key={pl.id} onClick={() => openNcmPl(pl)}>
                   <div className="cv"><LSCover cover={pl.cover} size={120} radius={10} /></div>
