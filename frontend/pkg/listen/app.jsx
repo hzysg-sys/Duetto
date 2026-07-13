@@ -39,6 +39,7 @@ function LSApp() {
   const [view, setView] = aUseState('player');         // player | playlist | browse | together
   const [idx, setIdx]   = aUseState(0);
   const [playing, setPlaying] = aUseState(false);
+  const [playError, setPlayError] = aUseState('');
   const [cur, setCur]   = aUseState(0);
   const [loved, setLoved] = aUseState(false);
   const [coverMode, setCoverMode] = aUseState(() => localStorage.getItem('ls-cover') || 'vinyl');
@@ -98,8 +99,10 @@ function LSApp() {
   const openSongById = (songId) => { const i = LS_SONGS.findIndex(s => s.id === songId); if (i >= 0) { setIdx(i); setDrawerIdx(i); } };
   const playSong = (song) => { setNcmSong(null); setNcmQueue(null); const i = LS_SONGS.findIndex(s => s.id === song.id); if (i >= 0) { setIdx(i); setCur(0); setPlaying(true); setView('player'); } };
   const logListen = (s, url) => { try { fetch((window.__LS_API || '/api') + '/listen-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id, title: s.title, artist: s.artist || '', dur: s.dur || 0, cover: s.cover || '', url: (url && /^https?:/.test(String(url))) ? String(url) : '' }) }).catch(function(){}); } catch (e) {} };
+  const failNcmPlay = (message) => { setPlaying(false); setPlayError(message || '这首歌暂时无法播放'); };
   const loadNcm = (s) => {
     const base = window.__LS_API || '/api';
+    setPlayError('');
     // 就绪即播：新 src 常在 loadstart（未就绪）时就调 play() → 不产生 playing → 无声。
     // 立即试一次，并挂一次性 canplay/loadeddata 监听在真正可播时补一次（iOS 后台续播关键）。
     const playSoon = function(){
@@ -124,7 +127,7 @@ function LSApp() {
       lsPrefetchNext();
       return;
     }
-    fetch(base + '/ncm/song-url?id=' + s.id).then(r => r.json()).then(d => { if (d && d.url) { lsMarkLoad(); lsAudioEl.src = d.url; playSoon(); logListen(s, d.url); } else { logListen(s, ''); } }).catch(function(){ logListen(s, ''); });
+    fetch(base + '/ncm/song-url?id=' + s.id).then(r => r.json()).then(d => { if (d && d.url) { lsMarkLoad(); lsAudioEl.src = d.url; playSoon(); logListen(s, d.url); } else { if (d && d.needs_reconnect) { if (window.__duettoClearNcmSession) window.__duettoClearNcmSession(); try { localStorage.removeItem('ls-ncm'); } catch(e){} } failNcmPlay(d && d.needs_reconnect ? '网易云登录已失效，请到歌单重新连接' : '这首歌暂时没有可用的播放地址'); logListen(s, ''); } }).catch(function(){ failNcmPlay('音频地址加载失败，请稍后重试'); logListen(s, ''); });
     fetch(base + '/ncm/lyric?id=' + s.id).then(r => r.json()).then(l => { window.__lsTLyric = (l && l.tlyric) || ''; setNcmLyric((l && l.lyric) || ''); }).catch(function(){});
     lsPrefetchNext();
   };
@@ -389,7 +392,7 @@ function LSApp() {
       window.__lsSysPause = Date.now(); window.__lsSysEvt = Date.now();
       setPlaying(false);
     };
-    var onPl = function(){ if (!window.__lsPlaying) { window.__lsSysEvt = Date.now(); setPlaying(true); } };
+    var onPl = function(){ setPlayError(''); if (!window.__lsPlaying) { window.__lsSysEvt = Date.now(); setPlaying(true); } };
     var onErr = function(){
       // 播放地址失效（网易云 URL 过期）：重取当前歌地址、回到原进度续播
       try {
@@ -400,7 +403,8 @@ function LSApp() {
         var base2 = window.__LS_API || '/api';
         fetch(base2 + '/ncm/song-url?id=' + s2.id).then(function(r){ return r.json(); }).then(function(d){
           if (d && d.url) { lsAudioEl.src = d.url; try { lsAudioEl.currentTime = at; } catch(er){} if (window.__lsPlaying) lsAudioEl.play().catch(function(){}); }
-        }).catch(function(){});
+          else failNcmPlay(d && d.needs_reconnect ? '网易云登录已失效，请到歌单重新连接' : '这首歌暂时没有可用的播放地址');
+        }).catch(function(){ failNcmPlay('音频地址加载失败，请稍后重试'); });
       } catch(er){}
     };
     var onVis = function(){ if (document.visibilityState === 'visible' && window.__lsPlaying && lsAudioEl.paused) { window.__lsSysEvt = Date.now(); lsAudioEl.play().catch(function(){}); } };
@@ -601,6 +605,8 @@ function LSApp() {
           </div>
         </div>
       )}
+
+      {playError && <button className="ls-play-error" onClick={() => { setPlayError(''); setPlaylistSub(null); setView('playlist'); }}>{playError}<span>去歌单 ›</span></button>}
 
       {/* 换肤 */}
       {skinOpen && (
