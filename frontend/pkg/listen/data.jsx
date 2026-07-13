@@ -2,7 +2,7 @@
 
 // —— 两个人 ——
 const LS_PEOPLE = {
-  yu:  { key: 'yu',  name: (function(){try{return localStorage.getItem('ls-nick-ai')||'AI';}catch(e){return 'AI';}})(),  latin: 'DJ', note: 'your listening companion', slot: 'ls-ava-yu',  glyph: 'AI' },
+  yu:  { key: 'yu',  name: (function(){try{return localStorage.getItem('ls-nick-ai')||'Elias';}catch(e){return 'Elias';}})(),  latin: 'DJ', note: 'your listening companion', slot: 'ls-ava-yu',  glyph: 'AI' },
   eve: { key: 'eve', name: (function(){try{return localStorage.getItem('ls-nick-user')||'You';}catch(e){return 'You';}})(), latin: '',   note: 'turn every song into a story', slot: 'ls-ava-eve', glyph: 'U' },
 };
 

@@ -156,6 +156,8 @@ function LSEdit({ eid, tag, cls, def }) {
 // ════════════ 歌单 / 资料（仿原生网易云）════════════
 function LSPlaylistView(props) {
   const { onPlay, onOpenSong } = props;
+  const bondStats = lsUseBondStats();
+  const profileName = ((window.LS_PEOPLE && window.LS_PEOPLE.eve && window.LS_PEOPLE.eve.name) || 'You') + ' & ' + ((window.LS_PEOPLE && window.LS_PEOPLE.yu && window.LS_PEOPLE.yu.name) || 'Elias');
 
   // R9 openPl 展开态：优先 props(app 持有)，否则本地兜底
   const [openPlLocal, setOpenPlLocal] = v3UseState(null);
@@ -478,15 +480,15 @@ function LSPlaylistView(props) {
       <div className="ls-pf-head">
         <div className="ls-pf-av"><image-slot id="ls-pf-avatar" shape="circle" always-ctl tap-replace placeholder=""></image-slot></div>
         <div className="ls-pf-namerow">
-          <LSEdit eid="pf-name" tag="b" cls="ls-pf-name" def="You & AI" />
+          <LSEdit eid="pf-name" tag="b" cls="ls-pf-name" def={profileName} />
         </div>
         <LSEdit eid="pf-sign" tag="div" cls="ls-pf-sign" def="一起听歌" />
         <div className="ls-pf-stat">
-          <span><b><LSEdit eid="pf-days" def="0" /></b>在一起</span>
+          <span title={'从 ' + bondStats.relationshipStart + ' 起（含第一天）'}><b>{bondStats.daysTogether}</b>在一起</span>
           <span className="dv"></span>
-          <span><b><LSEdit eid="pf-favs" def="0" /></b>共同收藏</span>
+          <span title="你和 Elias 都点过红心的歌曲"><b>{bondStats.commonFavorites}</b>共同收藏</span>
           <span className="dv"></span>
-          <span><b><LSEdit eid="pf-sync" def="0" /></b>默契</span>
+          <span title="共同红心 ÷ 双方红心并集"><b>{bondStats.syncRate}%</b>默契</span>
         </div>
       </div>
 
