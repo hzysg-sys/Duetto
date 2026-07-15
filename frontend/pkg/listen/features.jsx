@@ -57,10 +57,25 @@ function LSArcCard({ rec, compact, onOpen }) {
 
 function lsNotesToRecs(rows) {
   return (rows || []).map(function (n, i) {
-    return { id: 'sn' + (n.ts || 0) + '_' + i, songId: String(n.song_id || ''), title: n.title || '', artist: n.artist || '', cover: n.cover || '', passage: n.passage || '', think: n.thought || '', reply: n.reply || '', ts: n.ts };
+    return { id: String(n.client_id || ('sn' + (n.ts || 0) + '_' + i)), clientId: String(n.client_id || ''), songId: String(n.song_id || ''), title: n.title || '', artist: n.artist || '', cover: n.cover || '', passage: n.passage || '', think: n.thought || '', reply: n.reply || '', ts: n.ts };
   });
 }
 
+function lsArchiveSignature(rec) {
+  return [rec && rec.songId, rec && rec.passage, rec && (rec.think || rec.thought), rec && rec.reply].map(function (x) { return String(x || ''); }).join('\u0001');
+}
+
+function lsMergeArchive(localRows, serverRows) {
+  const out = [], seen = {};
+  (serverRows || []).concat(localRows || []).forEach(function (rec) {
+    if (!rec) return;
+    const key = lsArchiveSignature(rec);
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(rec);
+  });
+  return out.sort(function (a, b) { return Number(b.ts || 0) - Number(a.ts || 0); });
+}
 // ════════ A. 歌曲详情抽屉 ════════
 function LSSongDrawer({ song: songProp, ncmSong, ncmId, loved, onToggleLove, inLibrary, onAddLibrary, onAskAI, onClose }) {
   const song = ncmSong || songProp;
@@ -74,7 +89,7 @@ function LSSongDrawer({ song: songProp, ncmSong, ncmId, loved, onToggleLove, inL
   const localArc = (window.__lsStore.archive || []).filter(a => a.songId === song.id);
   const [srvArc, setSrvArc] = fUseState(null);
   fUseEffect(() => { let on = true; if (song && song.id && /^\d+$/.test(String(song.id))) { fetch((window.__LS_API || '/api') + '/song-notes?id=' + song.id).then(r => r.json()).then(d => { if (on && d && d.ok) setSrvArc(lsNotesToRecs(d.notes)); }).catch(() => {}); } return () => { on = false; }; }, [song && song.id]);
-  const archive = (srvArc !== null) ? srvArc : localArc;
+  const archive = (srvArc !== null) ? lsMergeArchive(localArc, srvArc) : localArc;
 
   const down = e => { startY.current = (e.touches ? e.touches[0].clientY : e.clientY); };
   const move = e => { if (startY.current == null) return; const y = (e.touches ? e.touches[0].clientY : e.clientY); const d = y - startY.current; if (d > 0) setDrag(d); };
@@ -178,8 +193,19 @@ function LSArchiveView({ onOpenSong }) {
   // 过滤旧版出厂占位（s1-s4）的记录，只显示真实的问Ta记录
   const localList = (window.__lsStore.archive || []).filter(function (a) { return !/^s\d$/.test(String((a && a.songId) || '')); });
   const [srvList, setSrvList] = fUseState(null);
-  fUseEffect(function () { fetch((window.__LS_API || '/api') + '/song-notes?limit=100').then(function (r) { return r.json(); }).then(function (d) { if (d && d.ok) setSrvList(lsNotesToRecs(d.notes || [])); }).catch(function () {}); }, []);
-  const list = srvList || localList;
+  fUseEffect(function () {
+    let on = true;
+    const base = window.__LS_API || '/api';
+    const oldNotes = localList.map(function (a) {
+      return { client_id: String(a.clientId || a.id || ''), song_id: String(a.songId || ''), title: a.title || '', artist: a.artist || '', cover: a.cover || '', passage: a.passage || '', thought: a.think || a.thought || '', reply: a.reply || '', ts: a.ts };
+    });
+    const migrate = oldNotes.length ? fetch(base + '/song-notes/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: oldNotes }) }).catch(function () {}) : Promise.resolve();
+    migrate.then(function () {
+      return fetch(base + '/song-notes?limit=100').then(function (r) { return r.json(); }).then(function (d) { if (on && d && d.ok) setSrvList(lsNotesToRecs(d.notes || [])); });
+    }).catch(function () {});
+    return function () { on = false; };
+  }, []);
+  const list = srvList === null ? localList : lsMergeArchive(localList, srvList);
   const f = list;
   // 真实听歌档案：服务端聚合（总量 / 时段偏好 / 常听排行 + 每首的听后印象）
   const [stats, setStats] = fUseState(null);

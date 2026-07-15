@@ -84,9 +84,11 @@ function LSAskBar({ song, passage, onClear, onSaved }) {
     setBusy(true); setReply(null); setUsedChip(chip ? chip.k : null);
     const out = await lsAskAI({ passage, think: think.trim(), chipPrompt: chip ? chip.prompt : '', song });
     setReply(out); setBusy(false);
+    const archiveTs = Date.now();
+    const archiveId = 'a' + archiveTs;
     // 在场记录落库（挂在这首歌上；满 6 条服务端自动总结成"印象"）
     try {
-      fetch((window.__LS_API || '/api') + '/song-note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: song.id, title: song.title, artist: song.artist || '', passage: passage || '', thought: think.trim(), reply: out }) }).catch(function () {});
+      fetch((window.__LS_API || '/api') + '/song-note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: archiveId, id: song.id, title: song.title, artist: song.artist || '', cover: song.cover || '', passage: passage || '', thought: think.trim(), reply: out, ts: archiveTs }) }).catch(function () {});
     } catch (e) {}
     // 问答同时进房间时间线（回房间就能看到这段）
     try {
@@ -99,8 +101,8 @@ function LSAskBar({ song, passage, onClear, onSaved }) {
     } catch (e) {}
     // 写入档案
     const s = window.__lsStore;
-    s.archive.unshift({ id: 'a' + Date.now(), songId: song.id, title: song.title, artist: song.artist, cover: song.cover || '',
-      passage, think: think.trim(), reply: out, model: (s.model && s.model.name) || 'AI', kind: 'both', ts: Date.now() });
+    s.archive.unshift({ id: archiveId, clientId: archiveId, songId: song.id, title: song.title, artist: song.artist, cover: song.cover || '',
+      passage, think: think.trim(), reply: out, model: (s.model && s.model.name) || 'AI', kind: 'both', ts: archiveTs });
     const li = s.library.find(x => x.songId === song.id); if (li) { li.notes += 1; li.last = Date.now(); }
     lsSaveStore(s); if (onSaved) onSaved();
   };

@@ -224,13 +224,92 @@ function logRoomNote(s, np, prompt, reply){
     const cv=normCover(np.cover||'');
     db.prepare("INSERT INTO songs(id,title,artist,cover,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, cover=CASE WHEN excluded.cover!='' AND COALESCE(songs.cover,'')='' THEN excluded.cover ELSE songs.cover END, updated_at=excluded.updated_at").run(sid, np.title||'', np.artist||'', cv, now, now);
     db.prepare('UPDATE songs SET notes_count=notes_count+1 WHERE id=?').run(sid);
+    callSharedArchive('/notes',{method:'POST',body:{note:{client_id:'room:'+sid+':'+now,song_id:sid,title:np.title||'',artist:np.artist||'',cover:np.cover||'',passage:pass,thought:th2.slice(0,500),reply:a2.slice(0,1000),ts:now}}}).catch(function(e){ console.error('[archive room write]',e.message); });
     if (withAnalysisAi(s).ai.api_key) maybeImpress(s, sid, np.title||'', np.artist||'');
   } catch(e){}
 }
 app.get('/api/prompt-preview',async(q,r)=>{ try{ const s0=getSettings(); const s={...s0, ai:{...s0.ai}}; if(String(q.query.mode||'')==='stream') s.ai.reply_mode='stream'; const np={ id:String(q.query.id||'25906124'), title:String(q.query.title||'晴天'), artist:String(q.query.artist||'周杰伦'), pos:100, dur:270, cur_lyric:String(q.query.lyric||'从前从前 有个人爱你很久') }; try { np.plays=countPlays(np.id); const a=readAnalysis(np.id); if(a)np.analysis=a.text; const im=readImpression(np.id); if(im)np.impression=im.text; const ns=readNotes(np.id, IMPRESSION_EVERY); if(ns.length)np.notes=ns; } catch(e){} r.type('text/plain').send(sysPrompt(s, 'music', np, q.query.ctx?String(q.query.ctx):'') + '\n\n────────\n（以上是 system 提示词。每次请求还会附带：房间最近 12 条对话，作为标准 user/assistant 消息历史跟在 system 之后——所以不显示在这里。）'); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 app.get('/api/song-analysis',(q,r)=>{ try{ const sid=String(q.query.id||''); const a=sid?readAnalysis(sid):null; const im=sid?readImpression(sid):null; r.json({ok:true, text:(a&&a.text)||'', impression:(im&&im.text)||'', impression_n:(im&&im.n)||0}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-app.get('/api/song-notes',async(q,r)=>{ try{ const sid=String(q.query.id||''); const limit=Math.min(200, Number(q.query.limit)||60); const sql=`SELECT n.song_id, COALESCE(NULLIF(n.title,''),s.title,'') AS title, COALESCE(NULLIF(n.artist,''),s.artist,'') AS artist, COALESCE(s.cover,'') AS cover, n.passage,n.thought,n.reply,n.ts FROM song_notes n LEFT JOIN songs s ON s.id=n.song_id`; const rows = sid ? db.prepare(sql+' WHERE n.song_id=? ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(sid, limit) : db.prepare(sql+' ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(limit); await fillCovers(rows.map(x=>({id:x.song_id, cover:x.cover}))); const cache=loadCoverCache(); for(const x of rows){ if(!x.cover && x.song_id && cache[x.song_id]) x.cover=cache[x.song_id]; } r.json({ok:true, notes:rows}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-app.post('/api/song-note',(q,r)=>{ try{ const b=q.body||{}; const sid=String(b.id||''); if(!sid) return r.json({ok:false}); const s0=getSettings(); const s2={...s0, ai:mergeAi(s0.ai, b.ai)}; const now=Date.now(); db.prepare('INSERT INTO song_notes(song_id,title,artist,passage,thought,reply,ts) VALUES(?,?,?,?,?,?,?)').run(sid, String(b.title||''), String(b.artist||''), String(b.passage||''), String(b.thought||''), String(b.reply||''), now); try{ const cv=normCover(b.cover||''); db.prepare("INSERT INTO songs(id,title,artist,cover,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, cover=CASE WHEN excluded.cover!='' AND COALESCE(songs.cover,'')='' THEN excluded.cover ELSE songs.cover END, updated_at=excluded.updated_at").run(sid, String(b.title||''), String(b.artist||''), cv, now, now); db.prepare('UPDATE songs SET notes_count=notes_count+1 WHERE id=?').run(sid); }catch(e){} if(withAnalysisAi(s2).ai.api_key) maybeImpress(s2, sid, b.title, b.artist); r.json({ok:true}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+function archiveNoteSignature(note){
+  return [String(note&&note.song_id||''), String(note&&note.ts||''), String(note&&note.passage||''), String(note&&note.thought||''), String(note&&note.reply||'')].join('\u0001');
+}
+function mergeArchiveNotes(remoteRows, localRows, limit){
+  const out=[], seen=new Set();
+  (remoteRows||[]).concat(localRows||[]).forEach(function(note){
+    if(!note) return;
+    const key=archiveNoteSignature(note);
+    if(seen.has(key)) return;
+    seen.add(key);
+    out.push(note);
+  });
+  return out.sort(function(a,b){ return Number(b.ts||0)-Number(a.ts||0); }).slice(0,limit);
+}
+function archiveNotePayload(raw){
+  const b=raw||{}, rawTs=Number(b.ts);
+  const songId=String(b.song_id||b.songId||b.id||'').trim();
+  if(!songId) return null;
+  return {
+    client_id:String(b.client_id||b.clientId||'').trim(),
+    song_id:songId,
+    title:String(b.title||''),
+    artist:String(b.artist||''),
+    cover:String(b.cover||''),
+    passage:String(b.passage||''),
+    thought:String(b.thought||b.think||''),
+    reply:String(b.reply||''),
+    ts:Number.isFinite(rawTs)&&rawTs>0?Math.floor(rawTs):Date.now()
+  };
+}
+app.get('/api/song-notes',async(q,r)=>{
+  try{
+    const sid=String(q.query.id||'');
+    const limit=Math.max(1,Math.min(200,Number(q.query.limit)||60));
+    const sql="SELECT n.song_id, COALESCE(NULLIF(n.title,''),s.title,'') AS title, COALESCE(NULLIF(n.artist,''),s.artist,'') AS artist, COALESCE(s.cover,'') AS cover, n.passage,n.thought,n.reply,n.ts FROM song_notes n LEFT JOIN songs s ON s.id=n.song_id";
+    const localRows=sid?db.prepare(sql+' WHERE n.song_id=? ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(sid,limit):db.prepare(sql+' ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(limit);
+    let remoteRows=[];
+    try{
+      const suffix='?limit='+encodeURIComponent(limit)+(sid?'&id='+encodeURIComponent(sid):'');
+      const remote=await callSharedArchive('/notes'+suffix);
+      remoteRows=Array.isArray(remote.notes)?remote.notes:[];
+    }catch(e){ console.error('[archive remote read]',e.message); }
+    const rows=mergeArchiveNotes(remoteRows,localRows,limit);
+    await fillCovers(rows.map(x=>({id:x.song_id,cover:x.cover})));
+    const cache=loadCoverCache();
+    for(const x of rows){ if(!x.cover&&x.song_id&&cache[x.song_id]) x.cover=cache[x.song_id]; }
+    r.json({ok:true,notes:rows});
+  }catch(e){ r.status(500).json({ok:false,error:e.message}); }
+});
+app.post('/api/song-note',async(q,r)=>{
+  try{
+    const b=q.body||{}, sid=String(b.id||'');
+    if(!sid) return r.json({ok:false});
+    const s0=getSettings(), s2={...s0,ai:mergeAi(s0.ai,b.ai)};
+    const rawTs=Number(b.ts), now=Number.isFinite(rawTs)&&rawTs>0?Math.floor(rawTs):Date.now();
+    db.prepare('INSERT INTO song_notes(song_id,title,artist,passage,thought,reply,ts) VALUES(?,?,?,?,?,?,?)').run(sid,String(b.title||''),String(b.artist||''),String(b.passage||''),String(b.thought||''),String(b.reply||''),now);
+    try{
+      const cv=normCover(b.cover||'');
+      db.prepare("INSERT INTO songs(id,title,artist,cover,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title, artist=excluded.artist, cover=CASE WHEN excluded.cover!='' AND COALESCE(songs.cover,'')='' THEN excluded.cover ELSE songs.cover END, updated_at=excluded.updated_at").run(sid,String(b.title||''),String(b.artist||''),cv,now,now);
+      db.prepare('UPDATE songs SET notes_count=notes_count+1 WHERE id=?').run(sid);
+    }catch(e){}
+    let persisted=true;
+    try{
+      await callSharedArchive('/notes',{method:'POST',body:{note:archiveNotePayload({...b,song_id:sid,ts:now})}});
+    }catch(e){ persisted=false; console.error('[archive remote write]',e.message); }
+    if(withAnalysisAi(s2).ai.api_key) maybeImpress(s2,sid,b.title,b.artist);
+    r.json({ok:true,persisted});
+  }catch(e){ r.status(500).json({ok:false,error:e.message}); }
+});
+app.post('/api/song-notes/import',async(q,r)=>{
+  try{
+    const notes=(Array.isArray(q.body&&q.body.notes)?q.body.notes:[]).slice(0,200).map(archiveNotePayload).filter(Boolean);
+    if(!notes.length) return r.json({ok:true,persisted:true,saved:0});
+    const d=await callSharedArchive('/notes',{method:'POST',body:{notes}});
+    r.json({ok:true,persisted:true,saved:Number(d.saved)||0,total:Number(d.total)||notes.length});
+  }catch(e){
+    console.error('[archive import]',e.message);
+    r.json({ok:true,persisted:false,saved:0});
+  }
+});
 function fmtSec(x){ x=Math.max(0,Math.floor(Number(x)||0)); return Math.floor(x/60)+':'+String(x%60).padStart(2,'0'); }
 // 组装"正在播"的完整上下文：进度 / 播放次数 / 歌曲分析 / 印象（或在场记录）
 async function enrichNp(s, np){
@@ -359,6 +438,16 @@ async function callSharedCompanion(body){
   },120000);
   const d=await rr.json().catch(()=>null);
   if(!rr.ok||!d||!d.ok) throw Object.assign(new Error((d&&d.error)||('Shared companion '+rr.status)),{status:rr.status>=400&&rr.status<600?rr.status:502});
+  return d;
+}
+async function callSharedArchive(pathname,options){
+  if(!SHARED_COMPANION_TOKEN) throw Object.assign(new Error('Shared companion token is not configured'),{status:503});
+  const over=options||{}, headers={Authorization:'Bearer '+SHARED_COMPANION_TOKEN};
+  const request={method:over.method||'GET',headers};
+  if(over.body!==undefined){ headers['Content-Type']='application/json'; request.body=JSON.stringify(over.body); }
+  const rr=await fetchT(SHARED_COMPANION_BASE+'/api/duetto/archive'+pathname,request,15000);
+  const d=await rr.json().catch(()=>null);
+  if(!rr.ok||!d||!d.ok) throw Object.assign(new Error((d&&d.error)||('Shared archive '+rr.status)),{status:rr.status>=400&&rr.status<600?rr.status:502});
   return d;
 }
 app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; const {prompt='',history=[],nowPlaying=null,client_time=''}=bb; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ const quote=bb.quote||(bb.ai&&bb.ai.quote); if(quote) np.quote=String(quote).slice(0,120); await enrichNp(s,np); } const d=await callSharedCompanion({prompt:String(prompt),history:past,now_playing:np,client_time:String(client_time||''),quote:String(bb.quote||(bb.ai&&bb.ai.quote)||'')}); const reply=String(d.reply||''); if(!(bb.ai&&bb.ai.no_note)) logRoomNote(s,np,prompt,reply); r.json({ok:true,reply,think:String(d.think||'')}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
